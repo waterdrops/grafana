@@ -88,7 +88,7 @@ require (
 	golang.org/x/oauth2 v0.0.0-20210218202405-ba52d332ba99
 	golang.org/x/sync v0.0.0-20201207232520-09787c993a3a
 	golang.org/x/time v0.0.0-20201208040808-7e3f01d25324
-	gonum.org/v1/gonum v0.8.2
+	gonum.org/v1/gonum v0.9.0
 	google.golang.org/api v0.40.0
 	google.golang.org/grpc v1.36.0
 	gopkg.in/alexcesaro/quotedprintable.v3 v3.0.0-20150716171945-2caba252f4dc // indirect
