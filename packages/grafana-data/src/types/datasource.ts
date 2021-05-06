@@ -170,7 +170,8 @@ export interface DataSourceConstructor<
  */
 abstract class DataSourceApi<
   TQuery extends DataQuery = DataQuery,
-  TOptions extends DataSourceJsonData = DataSourceJsonData
+  TOptions extends DataSourceJsonData = DataSourceJsonData,
+  TQueryImportConfiguration extends Record<string, object> = {}
 > {
   /**
    *  Set in constructor
@@ -208,7 +209,12 @@ abstract class DataSourceApi<
   /**
    * Imports queries from a different datasource
    */
-  importQueries?(queries: TQuery[], originMeta: PluginMeta): Promise<TQuery[]>;
+  async importQueries?(queries: DataQuery[], originDataSource: DataSourceApi): Promise<TQuery[]>;
+
+  /**
+   * Returns configuration for importing queries from other data sources
+   */
+  getImportQueryConfiguration?(): TQueryImportConfiguration;
 
   /**
    * Initializes a datasource after instantiation
@@ -617,7 +623,7 @@ export interface HistoryItem<TQuery extends DataQuery = DataQuery> {
   query: TQuery;
 }
 
-export abstract class LanguageProvider {
+abstract class LanguageProvider {
   abstract datasource: DataSourceApi<any, any>;
   abstract request: (url: string, params?: any) => Promise<any>;
 
@@ -628,6 +634,10 @@ export abstract class LanguageProvider {
   abstract start: () => Promise<Array<Promise<any>>>;
   startTask?: Promise<any[]>;
 }
+
+//@ts-ignore
+LanguageProvider = makeClassES5Compatible(LanguageProvider);
+export { LanguageProvider };
 
 //@ts-ignore
 DataSourceApi = makeClassES5Compatible(DataSourceApi);
