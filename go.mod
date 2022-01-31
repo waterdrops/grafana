@@ -20,7 +20,7 @@ require (
 	github.com/beevik/etree v1.1.0
 	github.com/benbjohnson/clock v1.1.0
 	github.com/bradfitz/gomemcache v0.0.0-20190913173617-a41fca850d0b
-	github.com/centrifugal/centrifuge v0.16.0
+	github.com/centrifugal/centrifuge v0.20.0
 	github.com/cortexproject/cortex v1.4.1-0.20201022071705-85942c5703cf
 	github.com/crewjam/saml v0.4.6-0.20201227203850-bca570abb2ce
 	github.com/davecgh/go-spew v1.1.1
@@ -39,7 +39,7 @@ require (
 	github.com/gobwas/glob v0.2.3
 	github.com/golang/mock v1.5.0
 	github.com/google/go-cmp v0.5.5
-	github.com/google/uuid v1.2.0
+	github.com/google/uuid v1.3.0
 	github.com/gosimple/slug v1.9.0
 	github.com/grafana/alerting-api v0.0.0-20210409134845-c36ac1eae41b
 	github.com/grafana/grafana-aws-sdk v0.4.0
@@ -92,7 +92,7 @@ require (
 	gonum.org/v1/gonum v0.9.1
 	google.golang.org/api v0.42.0
 	google.golang.org/grpc v1.36.1
-	google.golang.org/protobuf v1.26.0
+	google.golang.org/protobuf v1.27.1
 	gopkg.in/ini.v1 v1.62.0
 	gopkg.in/ldap.v3 v3.0.2
 	gopkg.in/macaron.v1 v1.4.0
