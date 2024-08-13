@@ -1,37 +1,28 @@
-import React from 'react';
-import { FieldConfigSource, GrafanaTheme, PanelPlugin } from '@grafana/data';
-import { DashboardModel, PanelModel } from '../../state';
-import { useStyles } from '@grafana/ui';
 import { css } from '@emotion/css';
+import React from 'react';
+
+import { GrafanaTheme2 } from '@grafana/data';
 import { selectors } from '@grafana/e2e-selectors';
-import { VisualizationButton } from './VisualizationButton';
+import { useStyles2 } from '@grafana/ui';
+import { useSelector } from 'app/types';
+
 import { OptionsPaneOptions } from './OptionsPaneOptions';
-import { useSelector } from 'react-redux';
-import { StoreState } from 'app/types';
+import { VisualizationButton } from './VisualizationButton';
 import { VisualizationSelectPane } from './VisualizationSelectPane';
+import { OptionPaneRenderProps } from './types';
 import { usePanelLatestData } from './usePanelLatestData';
 
-interface Props {
-  plugin: PanelPlugin;
-  panel: PanelModel;
-  width: number;
-  dashboard: DashboardModel;
-  onFieldConfigsChange: (config: FieldConfigSource) => void;
-  onPanelOptionsChanged: (options: any) => void;
-  onPanelConfigChange: (configKey: string, value: any) => void;
-}
-
-export const OptionsPane: React.FC<Props> = ({
+export const OptionsPane = ({
   plugin,
   panel,
-  width,
   onFieldConfigsChange,
   onPanelOptionsChanged,
   onPanelConfigChange,
   dashboard,
-}: Props) => {
-  const styles = useStyles(getStyles);
-  const isVizPickerOpen = useSelector((state: StoreState) => state.panelEditor.isVizPickerOpen);
+  instanceState,
+}: OptionPaneRenderProps) => {
+  const styles = useStyles2(getStyles);
+  const isVizPickerOpen = useSelector((state) => state.panelEditor.isVizPickerOpen);
   const { data } = usePanelLatestData(panel, { withTransforms: true, withFieldConfig: false }, true);
 
   return (
@@ -46,6 +37,7 @@ export const OptionsPane: React.FC<Props> = ({
               panel={panel}
               dashboard={dashboard}
               plugin={plugin}
+              instanceState={instanceState}
               data={data}
               onFieldConfigsChange={onFieldConfigsChange}
               onPanelOptionsChanged={onPanelOptionsChanged}
@@ -54,12 +46,12 @@ export const OptionsPane: React.FC<Props> = ({
           </div>
         </>
       )}
-      {isVizPickerOpen && <VisualizationSelectPane panel={panel} />}
+      {isVizPickerOpen && <VisualizationSelectPane panel={panel} data={data} />}
     </div>
   );
 };
 
-const getStyles = (theme: GrafanaTheme) => {
+const getStyles = (theme: GrafanaTheme2) => {
   return {
     wrapper: css`
       height: 100%;
@@ -67,14 +59,14 @@ const getStyles = (theme: GrafanaTheme) => {
       display: flex;
       flex: 1 1 0;
       flex-direction: column;
-      padding: ${theme.spacing.md} 0 0 0;
+      padding: 0;
     `,
     optionsWrapper: css`
       flex-grow: 1;
       min-height: 0;
     `,
     vizButtonWrapper: css`
-      padding: 0 ${theme.spacing.sm} ${theme.spacing.md} 0;
+      padding: 0 ${theme.spacing(2, 2)} 0;
     `,
     legacyOptions: css`
       label: legacy-options;
@@ -86,12 +78,12 @@ const getStyles = (theme: GrafanaTheme) => {
         margin-bottom: 0;
       }
       .panel-options-group__body {
-        padding: ${theme.spacing.md} 0;
+        padding: ${theme.spacing(2)} 0;
       }
 
       .section {
         display: block;
-        margin: ${theme.spacing.md} 0;
+        margin: ${theme.spacing(2)} 0;
 
         &:first-child {
           margin-top: 0;

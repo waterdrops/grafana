@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
-import { CollapsableSection, TagsInput, Select, Field, Input, Checkbox } from '@grafana/ui';
-import { SelectableValue } from '@grafana/data';
-import { DashboardLink, DashboardModel } from '../../state/DashboardModel';
 
-export const newLink = {
+import { SelectableValue } from '@grafana/data';
+import { DashboardLink } from '@grafana/schema';
+import { CollapsableSection, TagsInput, Select, Field, Input, Checkbox, Button, IconName } from '@grafana/ui';
+
+import { DashboardModel } from '../../state/DashboardModel';
+
+export const newLink: DashboardLink = {
   icon: 'external link',
   title: 'New link',
   tooltip: '',
@@ -14,14 +17,14 @@ export const newLink = {
   targetBlank: false,
   keepTime: false,
   includeVars: false,
-} as DashboardLink;
+};
 
 const linkTypeOptions = [
   { value: 'dashboards', label: 'Dashboards' },
   { value: 'link', label: 'Link' },
 ];
 
-export const linkIconMap: { [key: string]: string } = {
+export const linkIconMap: Record<string, IconName | undefined> = {
   'external link': 'external-link-alt',
   dashboard: 'apps',
   question: 'question-circle',
@@ -39,7 +42,7 @@ type LinkSettingsEditProps = {
   onGoBack: () => void;
 };
 
-export const LinkSettingsEdit: React.FC<LinkSettingsEditProps> = ({ editLinkIdx, dashboard }) => {
+export const LinkSettingsEdit = ({ editLinkIdx, dashboard, onGoBack }: LinkSettingsEditProps) => {
   const [linkSettings, setLinkSettings] = useState(editLinkIdx !== null ? dashboard.links[editLinkIdx] : newLink);
 
   const onUpdate = (link: DashboardLink) => {
@@ -49,7 +52,7 @@ export const LinkSettingsEdit: React.FC<LinkSettingsEditProps> = ({ editLinkIdx,
     setLinkSettings(link);
   };
 
-  const onTagsChange = (tags: any[]) => {
+  const onTagsChange = (tags: string[]) => {
     onUpdate({ ...linkSettings, tags: tags });
   };
 
@@ -87,12 +90,12 @@ export const LinkSettingsEdit: React.FC<LinkSettingsEditProps> = ({ editLinkIdx,
         <Input name="title" id="title" value={linkSettings.title} onChange={onChange} autoFocus={isNew} />
       </Field>
       <Field label="Type">
-        <Select value={linkSettings.type} options={linkTypeOptions} onChange={onTypeChange} />
+        <Select inputId="link-type-input" value={linkSettings.type} options={linkTypeOptions} onChange={onTypeChange} />
       </Field>
       {linkSettings.type === 'dashboards' && (
         <>
           <Field label="With tags">
-            <TagsInput tags={linkSettings.tags} placeholder="add tags" onChange={onTagsChange} />
+            <TagsInput tags={linkSettings.tags} onChange={onTagsChange} />
           </Field>
         </>
       )}
@@ -140,6 +143,7 @@ export const LinkSettingsEdit: React.FC<LinkSettingsEditProps> = ({ editLinkIdx,
           />
         </Field>
       </CollapsableSection>
+      <Button onClick={onGoBack}>Apply</Button>
     </div>
   );
 };

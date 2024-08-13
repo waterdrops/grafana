@@ -1,9 +1,8 @@
 {
   "type": "datasource",
-  "name": "Alert Manager",
+  "name": "Alertmanager",
   "id": "alertmanager",
   "metrics": false,
-  "state": "alpha",
   "routes": [
     {
       "method": "POST",
@@ -22,15 +21,15 @@
     },
     {
       "method": "POST",
-      "reqRole": "Admin"
+      "reqRole": "Editor"
     },
     {
       "method": "PUT",
-      "reqRole": "Admin"
+      "reqRole": "Editor"
     },
     {
       "method": "DELETE",
-      "reqRole": "Admin"
+      "reqRole": "Editor"
     },
     {
       "method": "GET",

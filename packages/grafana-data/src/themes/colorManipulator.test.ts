@@ -10,6 +10,7 @@ import {
   getContrastRatio,
   getLuminance,
   lighten,
+  asRgbString,
 } from './colorManipulator';
 
 describe('utils/colorManipulator', () => {
@@ -177,6 +178,10 @@ describe('utils/colorManipulator', () => {
       expect(getContrastRatio('#FFF', '#FFF')).toEqual(1);
     });
 
+    it('Can also take into account opacity for background', () => {
+      expect(getContrastRatio('#FFF', 'rgba(255,255,255,0.1)', '#000')).toEqual(17.5);
+    });
+
     it('returns a ratio for dark-grey : light-grey', () => {
       //expect(getContrastRatio('#707070', '#E5E5E5'))to.be.approximately(3.93, 0.01);
     });
@@ -256,7 +261,7 @@ describe('utils/colorManipulator', () => {
 
   describe('alpha', () => {
     it('converts an rgb color to an rgba color with the value provided', () => {
-      expect(alpha('rgb(1, 2, 3)', 0.4)).toEqual('rgba(1, 2, 3, 0.4)');
+      expect(alpha('rgb(1, 2, 3)', 0.4)).toEqual('rgb(1, 2, 3, 0.4)');
     });
 
     it('updates an CSS4 color with the alpha value provided', () => {
@@ -268,11 +273,23 @@ describe('utils/colorManipulator', () => {
     });
 
     it('converts an hsl color to an hsla color with the value provided', () => {
-      expect(alpha('hsl(0, 100%, 50%)', 0.1)).toEqual('hsla(0, 100%, 50%, 0.1)');
+      expect(alpha('hsl(0, 100%, 50%)', 0.1)).toEqual('hsl(0, 100%, 50%, 0.1)');
     });
 
     it('updates an hsla color with the alpha value provided', () => {
       expect(alpha('hsla(0, 100%, 50%, 0.2)', 0.5)).toEqual('hsla(0, 100%, 50%, 0.5)');
+    });
+
+    it('converts an #rrggbb hex color with the alpha value provided', () => {
+      expect(alpha('#FFFFFF', 0)).toEqual('#FFFFFF00');
+    });
+
+    it('converts an #rgb color with the alpha value provided', () => {
+      expect(alpha('#fff', 0.5)).toEqual('#ffffff80');
+    });
+
+    it('converts an #rgba color with the alpha value provided', () => {
+      expect(alpha('#ffff', 0.5)).toEqual('#ffffff80');
     });
 
     it('throw on invalid colors', () => {
@@ -397,6 +414,13 @@ describe('utils/colorManipulator', () => {
 
     it("doesn't modify CSS4 color when coefficient is 0", () => {
       expect(lighten('color(display-p3 1 0 0)', 0)).toEqual('color(display-p3 1 0 0)');
+    });
+  });
+
+  describe('asRgbString', () => {
+    it('should convert hex color to rgb', () => {
+      expect(asRgbString('#FFFFFF')).toEqual('rgb(255, 255, 255)');
+      expect(asRgbString('#000000')).toEqual('rgb(0, 0, 0)');
     });
   });
 });

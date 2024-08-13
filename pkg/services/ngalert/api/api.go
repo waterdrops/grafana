@@ -1,119 +1,163 @@
 package api
 
 import (
+	"context"
+	"net/url"
 	"time"
 
-	"github.com/grafana/grafana/pkg/services/ngalert/state"
-
-	"github.com/go-macaron/binding"
-
-	apimodels "github.com/grafana/alerting-api/pkg/api"
 	"github.com/grafana/grafana/pkg/api/routing"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/middleware"
+	"github.com/grafana/grafana/pkg/infra/tracing"
+	ac "github.com/grafana/grafana/pkg/services/accesscontrol"
+	"github.com/grafana/grafana/pkg/services/auth/identity"
 	"github.com/grafana/grafana/pkg/services/datasourceproxy"
 	"github.com/grafana/grafana/pkg/services/datasources"
-	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
-	"github.com/grafana/grafana/pkg/services/ngalert/schedule"
+	"github.com/grafana/grafana/pkg/services/featuremgmt"
+	"github.com/grafana/grafana/pkg/services/ngalert/accesscontrol"
+	"github.com/grafana/grafana/pkg/services/ngalert/backtesting"
+	"github.com/grafana/grafana/pkg/services/ngalert/eval"
+	"github.com/grafana/grafana/pkg/services/ngalert/metrics"
+	"github.com/grafana/grafana/pkg/services/ngalert/migration"
+	"github.com/grafana/grafana/pkg/services/ngalert/models"
+	"github.com/grafana/grafana/pkg/services/ngalert/notifier"
+	"github.com/grafana/grafana/pkg/services/ngalert/provisioning"
+	"github.com/grafana/grafana/pkg/services/ngalert/sender"
+	"github.com/grafana/grafana/pkg/services/ngalert/state"
 	"github.com/grafana/grafana/pkg/services/ngalert/store"
+	"github.com/grafana/grafana/pkg/services/quota"
 	"github.com/grafana/grafana/pkg/setting"
-	"github.com/grafana/grafana/pkg/tsdb"
 )
 
 // timeNow makes it possible to test usage of time
 var timeNow = time.Now
 
-type Alertmanager interface {
-	// Configuration
-	ApplyConfig(config *apimodels.PostableUserConfig) error
+type ExternalAlertmanagerProvider interface {
+	AlertmanagersFor(orgID int64) []*url.URL
+	DroppedAlertmanagersFor(orgID int64) []*url.URL
+}
 
-	// Silences
-	CreateSilence(ps *apimodels.PostableSilence) (string, error)
-	DeleteSilence(silenceID string) error
-	GetSilence(silenceID string) (apimodels.GettableSilence, error)
-	ListSilences(filter []string) (apimodels.GettableSilences, error)
+type AlertingStore interface {
+	GetLatestAlertmanagerConfiguration(ctx context.Context, orgID int64) (*models.AlertConfiguration, error)
+}
 
-	// Alerts
-	GetAlerts(active, silenced, inhibited bool, filter []string, receiver string) (apimodels.GettableAlerts, error)
-	GetAlertGroups(active, silenced, inhibited bool, filter []string, receiver string) (apimodels.AlertGroups, error)
+type RuleAccessControlService interface {
+	HasAccessToRuleGroup(ctx context.Context, user identity.Requester, rules models.RulesGroup) (bool, error)
+	AuthorizeAccessToRuleGroup(ctx context.Context, user identity.Requester, rules models.RulesGroup) error
+	AuthorizeRuleChanges(ctx context.Context, user identity.Requester, change *store.GroupDelta) error
+	AuthorizeDatasourceAccessForRule(ctx context.Context, user identity.Requester, rule *models.AlertRule) error
 }
 
 // API handlers.
 type API struct {
-	Cfg             *setting.Cfg
-	DatasourceCache datasources.CacheService
-	RouteRegister   routing.RouteRegister
-	DataService     *tsdb.Service
-	Schedule        schedule.ScheduleService
-	Store           store.Store
-	RuleStore       store.RuleStore
-	AlertingStore   store.AlertingStore
-	DataProxy       *datasourceproxy.DatasourceProxyService
-	Alertmanager    Alertmanager
-	StateTracker    *state.StateTracker
+	Cfg                  *setting.Cfg
+	DatasourceCache      datasources.CacheService
+	DatasourceService    datasources.DataSourceService
+	RouteRegister        routing.RouteRegister
+	QuotaService         quota.Service
+	TransactionManager   provisioning.TransactionManager
+	ProvenanceStore      provisioning.ProvisioningStore
+	RuleStore            RuleStore
+	AlertingStore        AlertingStore
+	AdminConfigStore     store.AdminConfigurationStore
+	DataProxy            *datasourceproxy.DataSourceProxyService
+	MultiOrgAlertmanager *notifier.MultiOrgAlertmanager
+	StateManager         *state.Manager
+	AccessControl        ac.AccessControl
+	Policies             *provisioning.NotificationPolicyService
+	ContactPointService  *provisioning.ContactPointService
+	Templates            *provisioning.TemplateService
+	MuteTimings          *provisioning.MuteTimingService
+	AlertRules           *provisioning.AlertRuleService
+	AlertsRouter         *sender.AlertsRouter
+	EvaluatorFactory     eval.EvaluatorFactory
+	FeatureManager       featuremgmt.FeatureToggles
+	Historian            Historian
+	Tracer               tracing.Tracer
+	AppUrl               *url.URL
+	UpgradeService       migration.UpgradeService
+
+	// Hooks can be used to replace API handlers for specific paths.
+	Hooks *Hooks
 }
 
 // RegisterAPIEndpoints registers API handlers
-func (api *API) RegisterAPIEndpoints() {
+func (api *API) RegisterAPIEndpoints(m *metrics.API) {
 	logger := log.New("ngalert.api")
 	proxy := &AlertingProxy{
 		DataProxy: api.DataProxy,
+		ac:        api.AccessControl,
 	}
-	// Register endpoints for proxing to Alertmanager-compatible backends.
-	api.RegisterAlertmanagerApiEndpoints(NewForkedAM(
+	ruleAuthzService := accesscontrol.NewRuleService(api.AccessControl)
+
+	// Register endpoints for proxying to Alertmanager-compatible backends.
+	api.RegisterAlertmanagerApiEndpoints(NewForkingAM(
 		api.DatasourceCache,
 		NewLotexAM(proxy, logger),
-		AlertmanagerSrv{store: api.AlertingStore, am: api.Alertmanager, log: logger},
-	))
-	// Register endpoints for proxing to Prometheus-compatible backends.
-	api.RegisterPrometheusApiEndpoints(NewForkedProm(
+		&AlertmanagerSrv{crypto: api.MultiOrgAlertmanager.Crypto, log: logger, ac: api.AccessControl, mam: api.MultiOrgAlertmanager},
+	), m)
+	// Register endpoints for proxying to Prometheus-compatible backends.
+	api.RegisterPrometheusApiEndpoints(NewForkingProm(
 		api.DatasourceCache,
 		NewLotexProm(proxy, logger),
-		PrometheusSrv{log: logger, stateTracker: api.StateTracker},
-	))
-	// Register endpoints for proxing to Cortex Ruler-compatible backends.
-	api.RegisterRulerApiEndpoints(NewForkedRuler(
+		&PrometheusSrv{log: logger, manager: api.StateManager, store: api.RuleStore, authz: ruleAuthzService},
+	), m)
+	// Register endpoints for proxying to Cortex Ruler-compatible backends.
+	api.RegisterRulerApiEndpoints(NewForkingRuler(
 		api.DatasourceCache,
 		NewLotexRuler(proxy, logger),
-		RulerSrv{store: api.RuleStore, log: logger},
-	))
-	// Register endpoints for testing evaluation of rules and notification channels.
-	api.RegisterTestingApiEndpoints(TestingApiMock{log: logger})
+		&RulerSrv{
+			conditionValidator: api.EvaluatorFactory,
+			QuotaService:       api.QuotaService,
+			store:              api.RuleStore,
+			provenanceStore:    api.ProvenanceStore,
+			xactManager:        api.TransactionManager,
+			log:                logger,
+			cfg:                &api.Cfg.UnifiedAlerting,
+			authz:              ruleAuthzService,
+		},
+	), m)
+	api.RegisterTestingApiEndpoints(NewTestingApi(
+		&TestingApiSrv{
+			AlertingProxy:   proxy,
+			DatasourceCache: api.DatasourceCache,
+			log:             logger,
+			authz:           ruleAuthzService,
+			evaluator:       api.EvaluatorFactory,
+			cfg:             &api.Cfg.UnifiedAlerting,
+			backtesting:     backtesting.NewEngine(api.AppUrl, api.EvaluatorFactory, api.Tracer),
+			featureManager:  api.FeatureManager,
+			appUrl:          api.AppUrl,
+			tracer:          api.Tracer,
+		}), m)
+	api.RegisterConfigurationApiEndpoints(NewConfiguration(
+		&ConfigSrv{
+			datasourceService:    api.DatasourceService,
+			store:                api.AdminConfigStore,
+			log:                  logger,
+			alertmanagerProvider: api.AlertsRouter,
+		},
+	), m)
 
-	// Legacy routes; they will be removed in v8
-	api.RouteRegister.Group("/api/alert-definitions", func(alertDefinitions routing.RouteRegister) {
-		alertDefinitions.Get("", middleware.ReqSignedIn, routing.Wrap(api.listAlertDefinitions))
-		alertDefinitions.Get("/eval/:alertDefinitionUID", middleware.ReqSignedIn, api.validateOrgAlertDefinition, routing.Wrap(api.alertDefinitionEvalEndpoint))
-		alertDefinitions.Post("/eval", middleware.ReqSignedIn, binding.Bind(ngmodels.EvalAlertConditionCommand{}), routing.Wrap(api.conditionEvalEndpoint))
-		alertDefinitions.Get("/:alertDefinitionUID", middleware.ReqSignedIn, api.validateOrgAlertDefinition, routing.Wrap(api.getAlertDefinitionEndpoint))
-		alertDefinitions.Delete("/:alertDefinitionUID", middleware.ReqEditorRole, api.validateOrgAlertDefinition, routing.Wrap(api.deleteAlertDefinitionEndpoint))
-		alertDefinitions.Post("/", middleware.ReqEditorRole, binding.Bind(ngmodels.SaveAlertDefinitionCommand{}), routing.Wrap(api.createAlertDefinitionEndpoint))
-		alertDefinitions.Put("/:alertDefinitionUID", middleware.ReqEditorRole, api.validateOrgAlertDefinition, binding.Bind(ngmodels.UpdateAlertDefinitionCommand{}), routing.Wrap(api.updateAlertDefinitionEndpoint))
-		alertDefinitions.Post("/pause", middleware.ReqEditorRole, binding.Bind(ngmodels.UpdateAlertDefinitionPausedCommand{}), routing.Wrap(api.alertDefinitionPauseEndpoint))
-		alertDefinitions.Post("/unpause", middleware.ReqEditorRole, binding.Bind(ngmodels.UpdateAlertDefinitionPausedCommand{}), routing.Wrap(api.alertDefinitionUnpauseEndpoint))
-	})
+	api.RegisterProvisioningApiEndpoints(NewProvisioningApi(&ProvisioningSrv{
+		log:                 logger,
+		policies:            api.Policies,
+		contactPointService: api.ContactPointService,
+		templates:           api.Templates,
+		muteTimings:         api.MuteTimings,
+		alertRules:          api.AlertRules,
+	}), m)
 
-	if api.Cfg.Env == setting.Dev {
-		api.RouteRegister.Group("/api/alert-definitions", func(alertDefinitions routing.RouteRegister) {
-			alertDefinitions.Post("/evalOld", middleware.ReqSignedIn, routing.Wrap(api.conditionEvalOldEndpoint))
-		})
-		api.RouteRegister.Group("/api/alert-definitions", func(alertDefinitions routing.RouteRegister) {
-			alertDefinitions.Get("/evalOldByID/:id", middleware.ReqSignedIn, routing.Wrap(api.conditionEvalOldEndpointByID))
-		})
-		api.RouteRegister.Group("/api/alert-definitions", func(alertDefinitions routing.RouteRegister) {
-			alertDefinitions.Get("/oldByID/:id", middleware.ReqSignedIn, routing.Wrap(api.conditionOldEndpointByID))
-		})
-		api.RouteRegister.Group("/api/alert-definitions", func(alertDefinitions routing.RouteRegister) {
-			alertDefinitions.Get("/ruleGroupByOldID/:id", middleware.ReqSignedIn, routing.Wrap(api.ruleGroupByOldID))
-		})
+	api.RegisterHistoryApiEndpoints(NewStateHistoryApi(&HistorySrv{
+		logger: logger,
+		hist:   api.Historian,
+	}), m)
+
+	// Inject upgrade endpoints if legacy alerting is enabled and the feature flag is enabled.
+	if !api.Cfg.UnifiedAlerting.IsEnabled() && api.FeatureManager.IsEnabledGlobally(featuremgmt.FlagAlertingPreviewUpgrade) {
+		api.RegisterUpgradeApiEndpoints(NewUpgradeApi(NewUpgradeSrc(
+			logger,
+			api.UpgradeService,
+			api.Cfg,
+		)), m)
 	}
-
-	api.RouteRegister.Group("/api/ngalert/", func(schedulerRouter routing.RouteRegister) {
-		schedulerRouter.Post("/pause", routing.Wrap(api.pauseScheduler))
-		schedulerRouter.Post("/unpause", routing.Wrap(api.unpauseScheduler))
-	}, middleware.ReqOrgAdmin)
-
-	api.RouteRegister.Group("/api/alert-instances", func(alertInstances routing.RouteRegister) {
-		alertInstances.Get("", middleware.ReqSignedIn, routing.Wrap(api.listAlertInstancesEndpoint))
-	})
 }

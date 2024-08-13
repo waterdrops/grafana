@@ -1,10 +1,14 @@
+import { cloneDeep } from 'lodash';
+
 import { reducerTester } from '../../../../test/core/redux/reducerTester';
-import cloneDeep from 'lodash/cloneDeep';
+import { ALL_VARIABLE_TEXT, ALL_VARIABLE_VALUE } from '../constants';
 import { getVariableTestContext } from '../state/helpers';
-import { ALL_VARIABLE_TEXT, ALL_VARIABLE_VALUE, toVariablePayload, VariablesState } from '../state/types';
-import { createCustomOptionsFromQuery, customVariableReducer } from './reducer';
-import { createCustomVariableAdapter } from './adapter';
+import { VariablesState } from '../state/types';
 import { CustomVariableModel } from '../types';
+import { toVariablePayload } from '../utils';
+
+import { createCustomVariableAdapter } from './adapter';
+import { createCustomOptionsFromQuery, customVariableReducer } from './reducer';
 
 describe('customVariableReducer', () => {
   const adapter = createCustomVariableAdapter();
@@ -14,7 +18,7 @@ describe('customVariableReducer', () => {
       const query = 'a,b,c,d : e';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query });
-      const payload = toVariablePayload({ id: '0', type: 'custom' });
+      const payload = toVariablePayload({ id: '0', type: 'custom' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))
@@ -54,7 +58,7 @@ describe('customVariableReducer', () => {
       const query = 'a,b,c,d:e';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query });
-      const payload = toVariablePayload({ id: '0', type: 'custom' });
+      const payload = toVariablePayload({ id: '0', type: 'custom' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))
@@ -94,7 +98,7 @@ describe('customVariableReducer', () => {
       const query = 'a,  b,   c, d : e  ';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query });
-      const payload = toVariablePayload({ id: '0', type: 'constant' });
+      const payload = toVariablePayload({ id: '0', type: 'constant' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))
@@ -134,7 +138,7 @@ describe('customVariableReducer', () => {
       const query = 'a,  b,   c, d :    e';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query });
-      const payload = toVariablePayload({ id: '0', type: 'constant' });
+      const payload = toVariablePayload({ id: '0', type: 'constant' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))
@@ -174,7 +178,7 @@ describe('customVariableReducer', () => {
       const query = 'a,  b,http://www.google.com/, http://www.amazon.com/';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query });
-      const payload = toVariablePayload({ id: '0', type: 'constant' });
+      const payload = toVariablePayload({ id: '0', type: 'constant' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))
@@ -214,7 +218,7 @@ describe('customVariableReducer', () => {
       const query = 'a,  b, google : http://www.google.com/, amazon : http://www.amazon.com/';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query });
-      const payload = toVariablePayload({ id: '0', type: 'constant' });
+      const payload = toVariablePayload({ id: '0', type: 'constant' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))
@@ -254,7 +258,7 @@ describe('customVariableReducer', () => {
       const query = 'a,b,c,d : e';
       const id = '0';
       const { initialState } = getVariableTestContext(adapter, { id, query, includeAll: true });
-      const payload = toVariablePayload({ id: '0', type: 'constant' });
+      const payload = toVariablePayload({ id: '0', type: 'constant' }, query);
 
       reducerTester<VariablesState>()
         .givenReducer(customVariableReducer, cloneDeep(initialState))

@@ -1,5 +1,3 @@
-import { Observable } from 'rxjs';
-
 /**
  * The channel id is defined as:
  *
@@ -17,29 +15,14 @@ export enum LiveChannelScope {
 }
 
 /**
- * @alpha -- experimental
+ * The type of data to expect in a given channel
+ *
+ * @alpha
  */
-export interface LiveChannelConfig {
-  /**
-   * The path definition.  either static, or it may contain variables identifed with {varname}
-   */
-  path: string;
-
-  /**
-   * An optional description for the channel
-   */
-  description?: string;
-
-  /**
-   * The channel keeps track of who else is connected to the same channel
-   */
-  hasPresence?: boolean;
-
-  /**
-   * This method will be defined if it is possible to publish in this channel.
-   * The function will return true/false if the current user can publish
-   */
-  canPublish?: () => boolean;
+export enum LiveChannelType {
+  DataStream = 'stream', // each message contains a batch of rows that will be appended to previous values
+  DataFrame = 'frame', // each message is an entire data frame and should *replace* previous content
+  JSON = 'json', // arbitrary json message
 }
 
 export enum LiveChannelConnectionState {
@@ -47,11 +30,13 @@ export enum LiveChannelConnectionState {
   Pending = 'pending',
   /** Connected to the channel */
   Connected = 'connected',
+  /** Connecting to a channel */
+  Connecting = 'connecting',
   /** Disconnected from the channel.  The channel will reconnect when possible */
   Disconnected = 'disconnected',
   /** Was at some point connected, and will not try to reconnect */
   Shutdown = 'shutdown',
-  /** Channel configuraiton was invalid and will not connect */
+  /** Channel configuration was invalid and will not connect */
   Invalid = 'invalid',
 }
 
@@ -145,10 +130,22 @@ export interface LiveChannelPresenceStatus {
 /**
  * @alpha -- experimental
  */
+export type LiveChannelId = string;
+
+/**
+ * @alpha -- experimental
+ */
 export interface LiveChannelAddress {
   scope: LiveChannelScope;
   namespace: string; // depends on the scope
   path: string;
+
+  /**
+   * Additional metadata passed to a channel.  The backend will propagate this JSON object to
+   * each OnSubscribe and RunStream calls.  This value should be constant across multiple requests
+   * to the same channel path
+   */
+  data?: any;
 }
 
 /**
@@ -172,63 +169,29 @@ export function parseLiveChannelAddress(id?: string): LiveChannelAddress | undef
 
 /**
  * Check if the address has a scope, namespace, and path
+ *
+ * @alpha -- experimental
  */
 export function isValidLiveChannelAddress(addr?: LiveChannelAddress): addr is LiveChannelAddress {
   return !!(addr?.path && addr.namespace && addr.scope);
 }
 
 /**
+ * Convert the address to an explicit channel path
+ *
  * @alpha -- experimental
  */
-export interface LiveChannel<TMessage = any, TPublish = any> {
-  /** The fully qualified channel id: ${scope}/${namespace}/${path} */
-  id: string;
-
-  /** The channel address */
-  addr: LiveChannelAddress;
-
-  /** Unix timestamp for when the channel connected */
-  opened: number;
-
-  /** Static definition of the channel definition.  This may describe the channel usage */
-  config?: LiveChannelConfig;
-
-  /**
-   * Watch for messages in a channel
-   */
-  getStream: () => Observable<LiveChannelEvent<TMessage>>;
-
-  /**
-   * For channels that support presence, this will request the current state from the server.
-   *
-   * Join and leave messages will be sent to the open stream
-   */
-  getPresence?: () => Promise<LiveChannelPresenceStatus>;
-
-  /**
-   * Write a message into the channel
-   *
-   * NOTE: This feature is supported by a limited set of channels
-   */
-  publish?: (msg: TPublish) => Promise<any>;
-
-  /**
-   * Close and terminate the channel for everyone
-   */
-  disconnect: () => void;
-}
-
-/**
- * @alpha -- experimental
- */
-export interface LiveChannelSupport {
-  /**
-   * Get the channel handler for the path, or throw an error if invalid
-   */
-  getChannelConfig(path: string): LiveChannelConfig | undefined;
-
-  /**
-   * Return a list of supported channels
-   */
-  getSupportedPaths(): LiveChannelConfig[];
+export function toLiveChannelId(addr: LiveChannelAddress): LiveChannelId {
+  if (!addr.scope) {
+    return '';
+  }
+  let id = addr.scope as string;
+  if (!addr.namespace) {
+    return id;
+  }
+  id += '/' + addr.namespace;
+  if (!addr.path) {
+    return id;
+  }
+  return id + '/' + addr.path;
 }

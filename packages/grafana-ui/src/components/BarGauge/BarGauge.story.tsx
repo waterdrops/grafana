@@ -1,22 +1,20 @@
-import React from 'react';
 import { Story, Meta } from '@storybook/react';
-import { BarGauge, BarGaugeDisplayMode } from '@grafana/ui';
-import { VizOrientation, ThresholdsMode, Field, FieldType, getDisplayProcessor } from '@grafana/data';
-import { Props } from './BarGauge';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
-import mdx from './BarGauge.mdx';
-import { useTheme } from '../../themes';
+import React from 'react';
 
-export default {
+import { VizOrientation, ThresholdsMode, Field, FieldType, getDisplayProcessor } from '@grafana/data';
+import { BarGauge, BarGaugeDisplayMode } from '@grafana/ui';
+
+import { useTheme2 } from '../../themes';
+
+import { Props } from './BarGauge';
+import mdx from './BarGauge.mdx';
+
+const meta: Meta = {
   title: 'Visualizations/BarGauge',
   component: BarGauge,
-  decorators: [withCenteredStory],
   parameters: {
     docs: {
       page: mdx,
-    },
-    knobs: {
-      disable: true,
     },
     controls: {
       exclude: [
@@ -58,7 +56,7 @@ export default {
     threshold1Color: { control: 'color' },
     threshold2Color: { control: 'color' },
   },
-} as Meta;
+};
 
 interface StoryProps extends Partial<Props> {
   numeric: number;
@@ -72,7 +70,7 @@ interface StoryProps extends Partial<Props> {
 }
 
 const AddBarGaugeStory = (storyProps: StoryProps) => {
-  const theme = useTheme();
+  const theme = useTheme2();
 
   const field: Partial<Field> = {
     type: FieldType.number,
@@ -89,7 +87,7 @@ const AddBarGaugeStory = (storyProps: StoryProps) => {
       },
     },
   };
-  field.display = getDisplayProcessor({ field });
+  field.display = getDisplayProcessor({ field, theme });
 
   const props: Partial<Props> = {
     theme,
@@ -125,3 +123,5 @@ barGaugeHorizontal.args = {
   width: 500,
   orientation: VizOrientation.Horizontal,
 };
+
+export default meta;

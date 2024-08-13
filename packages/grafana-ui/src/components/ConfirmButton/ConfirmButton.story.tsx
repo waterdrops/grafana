@@ -1,27 +1,28 @@
-import React from 'react';
-import { Meta, Story } from '@storybook/react';
-import { ConfirmButton } from '@grafana/ui';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
 import { action } from '@storybook/addon-actions';
+import { Meta, Story } from '@storybook/react';
+import React from 'react';
+
+import { ConfirmButton } from '@grafana/ui';
+
 import { Button } from '../Button';
-import { DeleteButton } from './DeleteButton';
+
 import { Props } from './ConfirmButton';
 import mdx from './ConfirmButton.mdx';
+import { DeleteButton } from './DeleteButton';
 
-export default {
+const meta: Meta = {
   title: 'Buttons/ConfirmButton',
   component: ConfirmButton,
-  decorators: [withCenteredStory],
+  // SB7 has broken subcomponent types due to dropping support for the feature
+  // https://github.com/storybookjs/storybook/issues/20782
+  // @ts-ignore
   subcomponents: { DeleteButton },
   parameters: {
     docs: {
       page: mdx,
     },
-    knobs: {
-      disable: true,
-    },
     controls: {
-      exclude: ['className'],
+      exclude: ['className', 'onClick', 'onCancel', 'onConfirm'],
     },
   },
   args: {
@@ -33,10 +34,15 @@ export default {
     closeOnConfirm: true,
   },
   argTypes: {
-    confirmVariant: { control: { type: 'select' } },
-    size: { control: { type: 'select' } },
+    confirmVariant: {
+      control: {
+        type: 'select',
+      },
+      options: ['primary', 'secondary', 'destructive', 'link'],
+    },
+    size: { control: { type: 'select' }, options: ['xs', 'sm', 'md', 'lg'] },
   },
-} as Meta;
+};
 
 interface StoryProps extends Partial<Props> {
   buttonText: string;
@@ -89,3 +95,5 @@ export const Delete: Story<StoryProps> = (args) => {
     />
   );
 };
+
+export default meta;

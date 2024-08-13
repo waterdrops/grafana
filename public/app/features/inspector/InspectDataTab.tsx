@@ -1,39 +1,47 @@
+import { cloneDeep } from 'lodash';
 import React, { PureComponent } from 'react';
 import AutoSizer from 'react-virtualized-auto-sizer';
+
 import {
   applyFieldOverrides,
   applyRawFieldOverrides,
-  CSVConfig,
+  CoreApp,
   DataFrame,
   DataTransformerID,
-  dateTimeFormat,
-  getFrameDisplayName,
+  FieldConfigSource,
   SelectableValue,
-  toCSV,
+  TimeZone,
   transformDataFrame,
 } from '@grafana/data';
-import { Button, Container, Field, HorizontalGroup, Select, Spinner, Switch, Table, VerticalGroup } from '@grafana/ui';
 import { selectors } from '@grafana/e2e-selectors';
-
-import { getPanelInspectorStyles } from './styles';
+import { getTemplateSrv, reportInteraction } from '@grafana/runtime';
+import { Button, Spinner, Table } from '@grafana/ui';
 import { config } from 'app/core/config';
-import { saveAs } from 'file-saver';
-import { css } from '@emotion/css';
+import { t, Trans } from 'app/core/internationalization';
 import { GetDataOptions } from 'app/features/query/state/PanelQueryRunner';
-import { QueryOperationRow } from 'app/core/components/QueryOperationRow/QueryOperationRow';
-import { PanelModel } from 'app/features/dashboard/state';
-import { DetailText } from 'app/features/inspector/DetailText';
+
+import { dataFrameToLogsModel } from '../logs/logsModel';
+
+import { InspectDataOptions } from './InspectDataOptions';
+import { getPanelInspectorStyles } from './styles';
+import { downloadAsJson, downloadDataFrameAsCsv, downloadLogsModelAsTxt, downloadTraceAsJson } from './utils/download';
 
 interface Props {
   isLoading: boolean;
   options: GetDataOptions;
+  timeZone: TimeZone;
+  app?: CoreApp;
   data?: DataFrame[];
-  panel?: PanelModel;
+  /** The title of the panel or other context name */
+  dataName: string;
+  panelPluginId?: string;
+  fieldConfig?: FieldConfigSource;
+  hasTransformations?: boolean;
   onOptionsChange?: (options: GetDataOptions) => void;
 }
 
 interface State {
-  /** The string is seriesToColumns transformation. Otherwise it is a dataframe index */
+  /** The string is joinByField transformation. Otherwise it is a dataframe index */
   selectedDataFrame: number | DataTransformerID;
   transformId: DataTransformerID;
   dataFrameIndex: number;
@@ -84,173 +92,158 @@ export class InspectDataTab extends PureComponent<Props, State> {
     }
   }
 
-  exportCsv = (dataFrame: DataFrame, csvConfig: CSVConfig = {}) => {
-    const { panel } = this.props;
+  exportCsv(dataFrames: DataFrame[], hasLogs: boolean) {
+    const { dataName } = this.props;
     const { transformId } = this.state;
+    const dataFrame = dataFrames[this.state.dataFrameIndex];
 
-    const dataFrameCsv = toCSV([dataFrame], csvConfig);
+    if (hasLogs) {
+      reportInteraction('grafana_logs_download_clicked', { app: this.props.app, format: 'csv' });
+    }
 
-    const blob = new Blob([String.fromCharCode(0xfeff), dataFrameCsv], {
-      type: 'text/csv;charset=utf-8',
+    downloadDataFrameAsCsv(dataFrame, dataName, { useExcelHeader: this.state.downloadForExcel }, transformId);
+  }
+
+  onExportLogsAsTxt = () => {
+    const { data, dataName, app } = this.props;
+
+    reportInteraction('grafana_logs_download_logs_clicked', {
+      app,
+      format: 'logs',
+      area: 'inspector',
     });
-    const displayTitle = panel ? panel.getDisplayTitle() : 'Explore';
-    const transformation = transformId !== DataTransformerID.noop ? '-as-' + transformId.toLocaleLowerCase() : '';
-    const fileName = `${displayTitle}-data${transformation}-${dateTimeFormat(new Date())}.csv`;
-    saveAs(blob, fileName);
+
+    const logsModel = dataFrameToLogsModel(data || []);
+    downloadLogsModelAsTxt(logsModel, dataName);
+  };
+
+  onExportTracesAsJson = () => {
+    const { data, dataName, app } = this.props;
+
+    if (!data) {
+      return;
+    }
+
+    for (const df of data) {
+      // Only export traces
+      if (df.meta?.preferredVisualisationType !== 'trace') {
+        continue;
+      }
+
+      const traceFormat = downloadTraceAsJson(df, dataName + '-traces');
+
+      reportInteraction('grafana_traces_download_traces_clicked', {
+        app,
+        grafana_version: config.buildInfo.version,
+        trace_format: traceFormat,
+        location: 'inspector',
+      });
+    }
+  };
+
+  onExportServiceGraph = () => {
+    const { data, dataName, app } = this.props;
+
+    reportInteraction('grafana_traces_download_service_graph_clicked', {
+      app,
+      grafana_version: config.buildInfo.version,
+      location: 'inspector',
+    });
+
+    if (!data) {
+      return;
+    }
+
+    downloadAsJson(data, dataName);
   };
 
   onDataFrameChange = (item: SelectableValue<DataTransformerID | number>) => {
     this.setState({
       transformId:
-        item.value === DataTransformerID.seriesToColumns ? DataTransformerID.seriesToColumns : DataTransformerID.noop,
+        item.value === DataTransformerID.joinByField ? DataTransformerID.joinByField : DataTransformerID.noop,
       dataFrameIndex: typeof item.value === 'number' ? item.value : 0,
       selectedDataFrame: item.value!,
     });
   };
 
+  onToggleDownloadForExcel = () => {
+    this.setState((prevState) => ({
+      downloadForExcel: !prevState.downloadForExcel,
+    }));
+  };
+
   getProcessedData(): DataFrame[] {
-    const { options, panel } = this.props;
+    const { options, panelPluginId, fieldConfig, timeZone } = this.props;
     const data = this.state.transformedData;
 
-    if (!options.withFieldConfig || !panel) {
+    if (!options.withFieldConfig || !panelPluginId || !fieldConfig) {
       return applyRawFieldOverrides(data);
     }
 
-    // We need to apply field config even though it was already applied in the PanelQueryRunner.
-    // That's because transformers create new fields and data frames, so i.e. display processor is no longer there
+    const fieldConfigCleaned = this.cleanTableConfigFromFieldConfig(panelPluginId, fieldConfig);
+
+    // We need to apply field config as it's not done by PanelQueryRunner (even when withFieldConfig is true).
+    // It's because transformers create new fields and data frames, and we need to clean field config of any table settings.
     return applyFieldOverrides({
       data,
-      theme: config.theme,
-      fieldConfig: panel.fieldConfig,
-      replaceVariables: (value: string) => {
-        return value;
-      },
+      theme: config.theme2,
+      fieldConfig: fieldConfigCleaned,
+      timeZone,
+      replaceVariables: (value, scopedVars, format) => getTemplateSrv().replace(value, scopedVars, format),
     });
   }
 
-  getActiveString() {
-    const { selectedDataFrame } = this.state;
-    const { options, data } = this.props;
-    let activeString = '';
-
-    if (!data) {
-      return activeString;
+  // Because we visualize this data in a table we have to remove any custom table display settings
+  cleanTableConfigFromFieldConfig(panelPluginId: string, fieldConfig: FieldConfigSource): FieldConfigSource {
+    if (panelPluginId !== 'table') {
+      return fieldConfig;
     }
 
-    const parts: string[] = [];
+    fieldConfig = cloneDeep(fieldConfig);
+    // clear all table specific options
+    fieldConfig.defaults.custom = {};
 
-    if (selectedDataFrame === DataTransformerID.seriesToColumns) {
-      parts.push('Series joined by time');
-    } else if (data.length > 1) {
-      parts.push(getFrameDisplayName(data[selectedDataFrame as number]));
-    }
-
-    if (options.withTransforms || options.withFieldConfig) {
-      if (options.withTransforms) {
-        parts.push('Panel transforms');
-      }
-
-      if (options.withTransforms && options.withFieldConfig) {
-      }
-
-      if (options.withFieldConfig) {
-        parts.push('Formatted data');
+    // clear all table override properties
+    for (const override of fieldConfig.overrides) {
+      for (const prop of override.properties) {
+        if (prop.id.startsWith('custom.')) {
+          const index = override.properties.indexOf(prop);
+          override.properties.slice(index, 1);
+        }
       }
     }
 
-    if (this.state.downloadForExcel) {
-      parts.push('Excel header');
-    }
-
-    return parts.join(', ');
+    return fieldConfig;
   }
 
-  renderDataOptions(dataFrames: DataFrame[]) {
-    const { options, onOptionsChange, panel, data } = this.props;
-    const { transformId, transformationOptions, selectedDataFrame } = this.state;
-
-    const styles = getPanelInspectorStyles();
-
-    const panelTransformations = panel?.getTransformations();
-    const showPanelTransformationsOption =
-      Boolean(panelTransformations?.length) && (transformId as any) !== 'join by time';
-    const showFieldConfigsOption = panel && !panel.plugin?.fieldConfigRegistry.isEmpty();
-
-    let dataSelect = dataFrames;
-    if (selectedDataFrame === DataTransformerID.seriesToColumns) {
-      dataSelect = data!;
-    }
-
-    const choices = dataSelect.map((frame, index) => {
-      return {
-        value: index,
-        label: `${getFrameDisplayName(frame)} (${index})`,
-      } as SelectableValue<number>;
-    });
-
-    const selectableOptions = [...transformationOptions, ...choices];
-
+  renderActions(dataFrames: DataFrame[], hasLogs: boolean, hasTraces: boolean, hasServiceGraph: boolean) {
     return (
-      <QueryOperationRow
-        id="Data options"
-        index={0}
-        title="Data options"
-        headerElement={<DetailText>{this.getActiveString()}</DetailText>}
-        isOpen={false}
-      >
-        <div className={styles.options} data-testid="dataOptions">
-          <VerticalGroup spacing="none">
-            {data!.length > 1 && (
-              <Field label="Show data frame">
-                <Select
-                  options={selectableOptions}
-                  value={selectedDataFrame}
-                  onChange={this.onDataFrameChange}
-                  width={30}
-                  aria-label="Select dataframe"
-                />
-              </Field>
-            )}
-
-            <HorizontalGroup>
-              {showPanelTransformationsOption && onOptionsChange && (
-                <Field
-                  label="Apply panel transformations"
-                  description="Table data is displayed with transformations defined in the panel Transform tab."
-                >
-                  <Switch
-                    value={!!options.withTransforms}
-                    onChange={() => onOptionsChange({ ...options, withTransforms: !options.withTransforms })}
-                  />
-                </Field>
-              )}
-              {showFieldConfigsOption && onOptionsChange && (
-                <Field
-                  label="Formatted data"
-                  description="Table data is formatted with options defined in the Field and Override tabs."
-                >
-                  <Switch
-                    value={!!options.withFieldConfig}
-                    onChange={() => onOptionsChange({ ...options, withFieldConfig: !options.withFieldConfig })}
-                  />
-                </Field>
-              )}
-              <Field label="Download for Excel" description="Adds header to CSV for use with Excel">
-                <Switch
-                  value={this.state.downloadForExcel}
-                  onChange={() => this.setState({ downloadForExcel: !this.state.downloadForExcel })}
-                />
-              </Field>
-            </HorizontalGroup>
-          </VerticalGroup>
-        </div>
-      </QueryOperationRow>
+      <>
+        <Button variant="primary" onClick={() => this.exportCsv(dataFrames, hasLogs)} size="sm">
+          <Trans i18nKey="dashboard.inspect-data.download-csv">Download CSV</Trans>
+        </Button>
+        {hasLogs && (
+          <Button variant="primary" onClick={this.onExportLogsAsTxt} size="sm">
+            <Trans i18nKey="dashboard.inspect-data.download-logs">Download logs</Trans>
+          </Button>
+        )}
+        {hasTraces && (
+          <Button variant="primary" onClick={this.onExportTracesAsJson} size="sm">
+            <Trans i18nKey="dashboard.inspect-data.download-traces">Download traces</Trans>
+          </Button>
+        )}
+        {hasServiceGraph && (
+          <Button variant="primary" onClick={this.onExportServiceGraph} size="sm">
+            <Trans i18nKey="dashboard.inspect-data.download-service">Download service graph</Trans>
+          </Button>
+        )}
+      </>
     );
   }
 
   render() {
-    const { isLoading } = this.props;
-    const { dataFrameIndex } = this.state;
+    const { isLoading, options, data, onOptionsChange, hasTransformations } = this.props;
+    const { dataFrameIndex, transformationOptions, selectedDataFrame, downloadForExcel } = this.state;
     const styles = getPanelInspectorStyles();
 
     if (isLoading) {
@@ -269,37 +262,39 @@ export class InspectDataTab extends PureComponent<Props, State> {
 
     // let's make sure we don't try to render a frame that doesn't exists
     const index = !dataFrames[dataFrameIndex] ? 0 : dataFrameIndex;
-    const data = dataFrames[index];
+    const dataFrame = dataFrames[index];
+    const hasLogs = dataFrames.some((df) => df?.meta?.preferredVisualisationType === 'logs');
+    const hasTraces = dataFrames.some((df) => df?.meta?.preferredVisualisationType === 'trace');
+    const hasServiceGraph = dataFrames.some((df) => df?.meta?.preferredVisualisationType === 'nodeGraph');
 
     return (
-      <div className={styles.dataTabContent} aria-label={selectors.components.PanelInspector.Data.content}>
-        <div className={styles.actionsWrapper}>
-          <div className={styles.dataDisplayOptions}>{this.renderDataOptions(dataFrames)}</div>
-          <Button
-            variant="primary"
-            onClick={() => this.exportCsv(dataFrames[dataFrameIndex], { useExcelHeader: this.state.downloadForExcel })}
-            className={css`
-              margin-bottom: 10px;
-            `}
-          >
-            Download CSV
-          </Button>
+      <div className={styles.wrap} aria-label={selectors.components.PanelInspector.Data.content}>
+        <div className={styles.toolbar}>
+          <InspectDataOptions
+            data={data}
+            hasTransformations={hasTransformations}
+            options={options}
+            dataFrames={dataFrames}
+            transformationOptions={transformationOptions}
+            selectedDataFrame={selectedDataFrame}
+            downloadForExcel={downloadForExcel}
+            onOptionsChange={onOptionsChange}
+            onDataFrameChange={this.onDataFrameChange}
+            toggleDownloadForExcel={this.onToggleDownloadForExcel}
+            actions={this.renderActions(dataFrames, hasLogs, hasTraces, hasServiceGraph)}
+          />
         </div>
-        <Container grow={1}>
+        <div className={styles.content}>
           <AutoSizer>
             {({ width, height }) => {
               if (width === 0) {
                 return null;
               }
 
-              return (
-                <div style={{ width, height }}>
-                  <Table width={width} height={height} data={data} />
-                </div>
-              );
+              return <Table width={width} height={height} data={dataFrame} showTypeIcons={true} />;
             }}
           </AutoSizer>
-        </Container>
+        </div>
       </div>
     );
   }
@@ -308,11 +303,11 @@ export class InspectDataTab extends PureComponent<Props, State> {
 function buildTransformationOptions() {
   const transformations: Array<SelectableValue<DataTransformerID>> = [
     {
-      value: DataTransformerID.seriesToColumns,
-      label: 'Series joined by time',
+      value: DataTransformerID.joinByField,
+      label: t('dashboard.inspect-data.transformation', 'Series joined by time'),
       transformer: {
-        id: DataTransformerID.seriesToColumns,
-        options: { byField: 'Time' },
+        id: DataTransformerID.joinByField,
+        options: { byField: undefined }, // defaults to time field
       },
     },
   ];

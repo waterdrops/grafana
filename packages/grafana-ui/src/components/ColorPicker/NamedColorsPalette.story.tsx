@@ -1,21 +1,15 @@
-import React from 'react';
-import { NamedColorsPalette, NamedColorsPaletteProps } from './NamedColorsPalette';
 import { Meta, Story } from '@storybook/react';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
-import { renderComponentWithTheme } from '../../utils/storybook/withTheme';
-import { UseState } from '../../utils/storybook/UseState';
-import mdx from './ColorPicker.mdx';
+import React, { useState } from 'react';
 
-export default {
+import mdx from './ColorPicker.mdx';
+import { NamedColorsPalette, NamedColorsPaletteProps } from './NamedColorsPalette';
+
+const meta: Meta = {
   title: 'Pickers and Editors/ColorPicker/Palettes/NamedColorsPalette',
   component: NamedColorsPalette,
-  decorators: [withCenteredStory],
   parameters: {
     docs: {
       page: mdx,
-    },
-    knobs: {
-      disable: true,
     },
     controls: {
       exclude: ['theme', 'color'],
@@ -24,24 +18,19 @@ export default {
   argTypes: {
     selectedColor: { control: { type: 'select', options: ['green', 'red', 'light-blue', 'yellow'] } },
   },
-} as Meta;
+};
 
 interface StoryProps extends Partial<NamedColorsPaletteProps> {
   selectedColor: string;
 }
 
 export const NamedColors: Story<StoryProps> = ({ selectedColor }) => {
-  return (
-    <UseState initialState={selectedColor}>
-      {(selectedColor, updateSelectedColor) => {
-        return renderComponentWithTheme(NamedColorsPalette, {
-          color: selectedColor,
-          onChange: updateSelectedColor,
-        });
-      }}
-    </UseState>
-  );
+  const [color, setColor] = useState('green');
+  return <NamedColorsPalette color={color} onChange={setColor} />;
 };
+
 NamedColors.args = {
-  selectedColor: 'red',
+  color: 'green',
 };
+
+export default meta;

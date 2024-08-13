@@ -1,5 +1,10 @@
-import React from 'react';
 import { Story, Meta } from '@storybook/react';
+import React from 'react';
+
+import { FieldSparkline, FieldType } from '@grafana/data';
+
+import { useTheme2 } from '../../themes';
+
 import {
   BigValue,
   BigValueColorMode,
@@ -8,21 +13,14 @@ import {
   BigValueTextMode,
   Props,
 } from './BigValue';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
 import mdx from './BigValue.mdx';
-import { useTheme } from '../../themes';
-import { ArrayVector, FieldSparkline, FieldType } from '@grafana/data';
 
-export default {
+const meta: Meta = {
   title: 'Visualizations/BigValue',
   component: BigValue,
-  decorators: [withCenteredStory],
   parameters: {
     docs: {
       page: mdx,
-    },
-    knobs: {
-      disable: true,
     },
     controls: {
       exclude: ['value', 'sparkline', 'onClick', 'className', 'alignmentFactors', 'text', 'count', 'theme'],
@@ -31,7 +29,9 @@ export default {
   argTypes: {
     width: { control: { type: 'range', min: 200, max: 800 } },
     height: { control: { type: 'range', min: 200, max: 800 } },
-    colorMode: { control: { type: 'select', options: [BigValueColorMode.Value, BigValueColorMode.Background] } },
+    colorMode: {
+      control: { type: 'select', options: [BigValueColorMode.Value, BigValueColorMode.Background] },
+    },
     graphMode: { control: { type: 'select', options: [BigValueGraphMode.Area, BigValueGraphMode.None] } },
     justifyMode: { control: { type: 'select', options: [BigValueJustifyMode.Auto, BigValueJustifyMode.Center] } },
     textMode: {
@@ -48,7 +48,7 @@ export default {
     },
     color: { control: 'color' },
   },
-} as Meta;
+};
 
 interface StoryProps extends Partial<Props> {
   numeric: number;
@@ -68,12 +68,13 @@ export const Basic: Story<StoryProps> = ({
   textMode,
   justifyMode,
 }) => {
-  const theme = useTheme();
+  const theme = useTheme2();
   const sparkline: FieldSparkline = {
     y: {
       name: '',
-      values: new ArrayVector([1, 2, 3, 4, 3]),
+      values: [1, 2, 3, 4, 3],
       type: FieldType.number,
+      state: { range: { min: 1, max: 4, delta: 3 } },
       config: {},
     },
   };
@@ -109,3 +110,5 @@ Basic.args = {
   color: 'red',
   textMode: BigValueTextMode.Auto,
 };
+
+export default meta;

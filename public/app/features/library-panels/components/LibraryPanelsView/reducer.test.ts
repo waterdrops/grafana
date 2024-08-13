@@ -1,6 +1,9 @@
 import { LoadingState } from '@grafana/data';
+import { Panel } from '@grafana/schema';
 
 import { reducerTester } from '../../../../../test/core/redux/reducerTester';
+import { LibraryElementDTO } from '../../types';
+
 import {
   changePage,
   initialLibraryPanelsViewState,
@@ -9,7 +12,6 @@ import {
   LibraryPanelsViewState,
   searchCompleted,
 } from './reducer';
-import { LibraryPanelDTO } from '../../types';
 
 describe('libraryPanelsViewReducer', () => {
   describe('when initSearch is dispatched', () => {
@@ -85,14 +87,13 @@ describe('libraryPanelsViewReducer', () => {
   });
 });
 
-function getLibraryPanelMocks(count: number): LibraryPanelDTO[] {
-  const mocks: LibraryPanelDTO[] = [];
+function getLibraryPanelMocks(count: number): LibraryElementDTO[] {
+  const mocks: LibraryElementDTO[] = [];
 
   for (let i = 0; i < count; i++) {
     mocks.push(
       mockLibraryPanel({
         uid: i.toString(10),
-        id: i,
         name: `Test Panel ${i}`,
       })
     );
@@ -103,13 +104,12 @@ function getLibraryPanelMocks(count: number): LibraryPanelDTO[] {
 
 function mockLibraryPanel({
   uid = '1',
-  id = 1,
-  orgId = 1,
-  folderId = 0,
+  folderUid = '',
   name = 'Test Panel',
-  model = { type: 'text', title: 'Test Panel' },
+  model = { type: 'text', title: 'Test Panel' } as Panel,
   meta = {
-    canEdit: true,
+    folderName: 'General',
+    folderUid: '',
     connectedDashboards: 0,
     created: '2021-01-01T00:00:00',
     createdBy: { id: 1, name: 'User X', avatarUrl: '/avatar/abc' },
@@ -119,12 +119,10 @@ function mockLibraryPanel({
   version = 1,
   description = 'a description',
   type = 'text',
-}: Partial<LibraryPanelDTO> = {}): LibraryPanelDTO {
+}: Partial<LibraryElementDTO> = {}): LibraryElementDTO {
   return {
     uid,
-    id,
-    orgId,
-    folderId,
+    folderUid,
     name,
     model,
     version,

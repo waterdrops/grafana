@@ -1,5 +1,7 @@
 import { reducerTester } from 'test/core/redux/reducerTester';
-import { Filter } from '../../../aggregations';
+
+import { Filter } from '../../../../../../types';
+
 import { addFilter, changeFilter, removeFilter } from './actions';
 import { reducer } from './reducer';
 
@@ -46,7 +48,7 @@ describe('Filters Bucket Aggregation Settings Reducer', () => {
 
     reducerTester<Filter[]>()
       .givenReducer(reducer, [firstFilter, secondFilter])
-      .whenActionIsDispatched(changeFilter(1, expectedSecondFilter))
+      .whenActionIsDispatched(changeFilter({ index: 1, filter: expectedSecondFilter }))
       .thenStateShouldEqual([firstFilter, expectedSecondFilter]);
   });
 });

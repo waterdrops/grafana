@@ -1,9 +1,16 @@
+import { css, cx } from '@emotion/css';
 import React from 'react';
+
 import { selectors } from '@grafana/e2e-selectors';
+
+import { useStyles2 } from '../../themes';
 import { Icon } from '../Icon/Icon';
 import { Tooltip } from '../Tooltip/Tooltip';
 
-type LoadingIndicatorProps = {
+/**
+ * @internal
+ */
+export type LoadingIndicatorProps = {
   loading: boolean;
   onCancel: () => void;
 };
@@ -11,7 +18,9 @@ type LoadingIndicatorProps = {
 /**
  * @internal
  */
-export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({ onCancel, loading }) => {
+export const LoadingIndicator = ({ onCancel, loading }: LoadingIndicatorProps) => {
+  const styles = useStyles2(getStyles);
+
   if (!loading) {
     return null;
   }
@@ -19,7 +28,7 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({ onCancel, lo
   return (
     <Tooltip content="Cancel query">
       <Icon
-        className="spin-clockwise"
+        className={cx('spin-clockwise', { [styles.clickable]: !!onCancel })}
         name="sync"
         size="sm"
         onClick={onCancel}
@@ -27,4 +36,12 @@ export const LoadingIndicator: React.FC<LoadingIndicatorProps> = ({ onCancel, lo
       />
     </Tooltip>
   );
+};
+
+const getStyles = () => {
+  return {
+    clickable: css({
+      cursor: 'pointer',
+    }),
+  };
 };

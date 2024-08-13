@@ -1,15 +1,19 @@
-import React from 'react';
-import { Provider } from 'react-redux';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { selectors } from '@grafana/e2e-selectors';
-import { LoadingState } from '@grafana/data';
+import React from 'react';
+import { Provider } from 'react-redux';
+import { Store } from 'redux';
 
-import { VariablePickerProps } from '../types';
-import { QueryVariableModel } from '../../types';
+import { LoadingState } from '@grafana/data';
+import { selectors } from '@grafana/e2e-selectors';
+
 import { queryBuilder } from '../../shared/testing/builders';
+import { getPreloadedState } from '../../state/helpers';
+import { QueryVariableModel, VariableWithMultiSupport, VariableWithOptions } from '../../types';
+import { VariablePickerProps } from '../types';
+
 import { optionPickerFactory } from './OptionsPicker';
-import { initialState, OptionsPickerState } from './reducer';
+import { initialOptionPickerState, OptionsPickerState } from './reducer';
 
 interface Args {
   pickerState?: Partial<OptionsPickerState>;
@@ -18,6 +22,7 @@ interface Args {
 
 const defaultVariable = queryBuilder()
   .withId('query0')
+  .withRootStateKey('key')
   .withName('query0')
   .withMulti()
   .withCurrent(['A', 'C'])
@@ -30,23 +35,23 @@ function setupTestContext({ pickerState = {}, variable = {} }: Args = {}) {
     ...variable,
   };
   const onVariableChange = jest.fn();
-  const props: VariablePickerProps<QueryVariableModel> = {
+  const props: VariablePickerProps<VariableWithMultiSupport | VariableWithOptions> = {
     variable: v,
     onVariableChange,
+    readOnly: false,
   };
   const Picker = optionPickerFactory();
-  const optionsPicker: OptionsPickerState = { ...initialState, ...pickerState };
+  const optionsPicker: OptionsPickerState = { ...initialOptionPickerState, ...pickerState };
   const dispatch = jest.fn();
   const subscribe = jest.fn();
-  const getState = jest.fn().mockReturnValue({
-    templating: {
-      variables: {
-        [v.id]: { ...v },
-      },
-      optionsPicker,
+  const templatingState = {
+    variables: {
+      [v.id]: { ...v },
     },
-  });
-  const store: any = { getState, dispatch, subscribe };
+    optionsPicker,
+  };
+  const getState = jest.fn().mockReturnValue(getPreloadedState('key', templatingState));
+  const store = { getState, dispatch, subscribe } as unknown as Store;
   const { rerender } = render(
     <Provider store={store}>
       <Picker {...props} />
@@ -56,11 +61,11 @@ function setupTestContext({ pickerState = {}, variable = {} }: Args = {}) {
 }
 
 function getSubMenu(text: string) {
-  return screen.getByLabelText(selectors.pages.Dashboard.SubMenu.submenuItemValueDropDownValueLinkTexts(text));
+  return screen.getByTestId(selectors.pages.Dashboard.SubMenu.submenuItemValueDropDownValueLinkTexts(text));
 }
 
 function getOption(text: string) {
-  return screen.getByLabelText(selectors.pages.Dashboard.SubMenu.submenuItemValueDropDownOptionTexts('A'));
+  return screen.getByTestId(selectors.pages.Dashboard.SubMenu.submenuItemValueDropDownOptionTexts('A'));
 }
 
 describe('OptionPicker', () => {
@@ -70,11 +75,11 @@ describe('OptionPicker', () => {
       expect(getSubMenu('A + C')).toBeInTheDocument();
     });
 
-    it('link text should be clickable', () => {
+    it('link text should be clickable', async () => {
       const { dispatch } = setupTestContext();
 
       dispatch.mockClear();
-      userEvent.click(getSubMenu('A + C'));
+      await userEvent.click(getSubMenu('A + C'));
       expect(dispatch).toHaveBeenCalledTimes(1);
     });
   });
@@ -88,14 +93,14 @@ describe('OptionPicker', () => {
       expect(getSubMenu('A + C')).toBeInTheDocument();
     });
 
-    it('link text should be clickable', () => {
+    it('link text should be clickable', async () => {
       const { dispatch } = setupTestContext({
         variable: defaultVariable,
         pickerState: { id: 'Other' },
       });
 
       dispatch.mockClear();
-      userEvent.click(getSubMenu('A + C'));
+      await userEvent.click(getSubMenu('A + C'));
       expect(dispatch).toHaveBeenCalledTimes(1);
     });
   });
@@ -109,13 +114,13 @@ describe('OptionPicker', () => {
       expect(screen.getByLabelText(selectors.components.LoadingIndicator.icon)).toBeInTheDocument();
     });
 
-    it('link text should not be clickable', () => {
+    it('link text should not be clickable', async () => {
       const { dispatch } = setupTestContext({
         variable: { ...defaultVariable, state: LoadingState.Loading },
       });
 
       dispatch.mockClear();
-      userEvent.click(getSubMenu('A + C'));
+      await userEvent.click(getSubMenu('A + C'));
       expect(dispatch).toHaveBeenCalledTimes(0);
     });
   });

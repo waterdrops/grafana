@@ -1,38 +1,57 @@
-import { Icon, IconName, useStyles, Tooltip } from '@grafana/ui';
-import { PopoverContent } from '@grafana/ui/src/components/Tooltip/Tooltip';
-import { TooltipPlacement } from '@grafana/ui/src/components/Tooltip/PopoverController';
-import React, { FC } from 'react';
-import { css } from '@emotion/css';
+import React from 'react';
+
+import { IconName, Tooltip, LinkButton, Button } from '@grafana/ui';
+import { PopoverContent, TooltipPlacement } from '@grafana/ui/src/components/Tooltip';
 
 interface Props {
   tooltip: PopoverContent;
   icon: IconName;
-
+  className?: string;
   tooltipPlacement?: TooltipPlacement;
-  href?: string;
+  to?: string;
   target?: string;
-  onClick?: (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => void;
+  onClick?: () => void;
+  'data-testid'?: string;
 }
 
-export const ActionIcon: FC<Props> = ({ tooltip, icon, href, target, onClick, tooltipPlacement = 'top' }) => {
-  const iconEl = <Icon className={useStyles(getStyle)} name={icon} />;
+export const ActionIcon = ({
+  tooltip,
+  icon,
+  to,
+  target,
+  onClick,
+  className,
+  tooltipPlacement = 'top',
+  ...rest
+}: Props) => {
+  const ariaLabel = typeof tooltip === 'string' ? tooltip : undefined;
 
   return (
     <Tooltip content={tooltip} placement={tooltipPlacement}>
-      {(() => {
-        if (href || onClick) {
-          return (
-            <a href={href} onClick={onClick} target={target}>
-              {iconEl}
-            </a>
-          );
-        }
-        return iconEl;
-      })()}
+      {to ? (
+        <LinkButton
+          variant="secondary"
+          fill="text"
+          icon={icon}
+          href={to}
+          size="sm"
+          target={target}
+          {...rest}
+          aria-label={ariaLabel}
+        />
+      ) : (
+        <Button
+          className={className}
+          variant="secondary"
+          fill="text"
+          size="sm"
+          icon={icon}
+          type="button"
+          onClick={onClick}
+          {...rest}
+          aria-label={ariaLabel}
+        />
+      )}
     </Tooltip>
   );
 };
-
-export const getStyle = () => css`
-  cursor: pointer;
-`;

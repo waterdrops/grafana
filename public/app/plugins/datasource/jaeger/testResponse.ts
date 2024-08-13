@@ -1,5 +1,6 @@
+import { FieldDTO } from '@grafana/data';
+
 import { TraceResponse } from './types';
-import { ArrayVector, FieldDTO } from '@grafana/data';
 
 export const testResponse: TraceResponse = {
   traceID: '3fa414edcef6ad90',
@@ -50,7 +51,7 @@ export const testResponse: TraceResponse = {
 };
 
 function toVectors(fields: FieldDTO[]) {
-  return fields.map((f) => ({ ...f, values: new ArrayVector<any>(f.values as any[]) }));
+  return fields.map((f) => ({ ...f, values: f.values }));
 }
 
 export const testResponseDataFrameFields = toVectors([
@@ -96,8 +97,8 @@ export const testResponseNodesFields = toNodesFrame([
   ['3fa414edcef6ad90', '0f5c1808567e4403'],
   ['tempo-querier', 'tempo-querier'],
   ['HTTP GET - api_traces_traceid', '/tempopb.Querier/FindTraceByID'],
-  ['total: 1049.14ms (100%)', 'total: 1.85ms (0.18%)'],
-  ['self: 1047.29ms (99.82%)', 'self: 1.85ms (100%)'],
+  ['1049.14ms (100%)', '1.85ms (0.18%)'],
+  ['1047.29ms (99.82%)', '1.85ms (100%)'],
   [0.9982395121342127, 0.0017604878657873442],
 ]);
 
@@ -111,9 +112,9 @@ export function toNodesFrame(values: any[]) {
   return toVectors([
     { name: 'id', values: values[0] },
     { name: 'title', values: values[1] },
-    { name: 'subTitle', values: values[2] },
-    { name: 'mainStat', values: values[3] },
-    { name: 'secondaryStat', values: values[4] },
+    { name: 'subtitle', values: values[2] },
+    { name: 'mainstat', values: values[3] },
+    { name: 'secondarystat', values: values[4] },
     {
       name: 'color',
       config: {

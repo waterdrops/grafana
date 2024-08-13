@@ -1,67 +1,136 @@
 // Libraries
-import React, { FC, HTMLAttributes, useEffect } from 'react';
-import { getTitleFromNavModel } from 'app/core/selectors/navModel';
-
-// Components
-import PageHeader from '../PageHeader/PageHeader';
-import { Footer } from '../Footer/Footer';
-import { PageContents } from './PageContents';
-import { CustomScrollbar, useStyles } from '@grafana/ui';
-import { GrafanaTheme, NavModel } from '@grafana/data';
-import { Branding } from '../Branding/Branding';
 import { css, cx } from '@emotion/css';
+import React, { useLayoutEffect } from 'react';
 
-interface Props extends HTMLAttributes<HTMLDivElement> {
-  children: React.ReactNode;
-  navModel: NavModel;
-  contentWidth?: keyof GrafanaTheme['breakpoints'];
-}
+import { GrafanaTheme2, PageLayoutType } from '@grafana/data';
+import { config } from '@grafana/runtime';
+import { CustomScrollbar, useStyles2 } from '@grafana/ui';
+import { useGrafana } from 'app/core/context/GrafanaContext';
 
-export interface PageType extends FC<Props> {
-  Header: typeof PageHeader;
-  Contents: typeof PageContents;
-}
+import { PageContents } from './PageContents';
+import { PageHeader } from './PageHeader';
+import { PageTabs } from './PageTabs';
+import { PageType } from './types';
+import { usePageNav } from './usePageNav';
+import { usePageTitle } from './usePageTitle';
 
-export const Page: PageType = ({ navModel, children, className, contentWidth, ...otherProps }) => {
-  const styles = useStyles(getStyles);
+export const Page: PageType = ({
+  navId,
+  navModel: oldNavProp,
+  pageNav,
+  renderTitle,
+  onEditTitle,
+  actions,
+  subTitle,
+  children,
+  className,
+  info,
+  layout = PageLayoutType.Standard,
+  scrollTop,
+  scrollRef,
+  ...otherProps
+}) => {
+  const styles = useStyles2(getStyles);
+  const navModel = usePageNav(navId, oldNavProp);
+  const { chrome } = useGrafana();
 
-  useEffect(() => {
-    const title = getTitleFromNavModel(navModel);
-    document.title = title ? `${title} - ${Branding.AppTitle}` : Branding.AppTitle;
-  }, [navModel]);
+  usePageTitle(navModel, pageNav);
+
+  const pageHeaderNav = pageNav ?? navModel?.node;
+
+  // We use useLayoutEffect here to make sure that the chrome is updated before the page is rendered
+  // This prevents flickering sectionNav when going from dashboard to settings for example
+  useLayoutEffect(() => {
+    if (navModel) {
+      chrome.update({
+        sectionNav: navModel,
+        pageNav: pageNav,
+        layout: layout,
+      });
+    }
+  }, [navModel, pageNav, chrome, layout]);
 
   return (
-    <div
-      {...otherProps}
-      className={cx(styles.wrapper, className, contentWidth ? styles.contentWidth(contentWidth) : undefined)}
-    >
-      <CustomScrollbar autoHeightMin={'100%'}>
-        <div className="page-scrollbar-content">
-          <PageHeader model={navModel} />
-          {children}
-          <Footer />
-        </div>
-      </CustomScrollbar>
+    <div className={cx(styles.wrapper, className)} {...otherProps}>
+      {layout === PageLayoutType.Standard && (
+        <CustomScrollbar autoHeightMin={'100%'} scrollTop={scrollTop} scrollRefCallback={scrollRef}>
+          <div className={styles.pageInner}>
+            {pageHeaderNav && (
+              <PageHeader
+                actions={actions}
+                onEditTitle={onEditTitle}
+                navItem={pageHeaderNav}
+                renderTitle={renderTitle}
+                info={info}
+                subTitle={subTitle}
+              />
+            )}
+            {pageNav && pageNav.children && <PageTabs navItem={pageNav} />}
+            <div className={styles.pageContent}>{children}</div>
+          </div>
+        </CustomScrollbar>
+      )}
+      {layout === PageLayoutType.Canvas && (
+        <CustomScrollbar autoHeightMin={'100%'} scrollTop={scrollTop} scrollRefCallback={scrollRef}>
+          <div className={styles.canvasContent}>{children}</div>
+        </CustomScrollbar>
+      )}
+      {layout === PageLayoutType.Custom && children}
     </div>
   );
 };
 
-Page.Header = PageHeader;
 Page.Contents = PageContents;
 
-export default Page;
+const getStyles = (theme: GrafanaTheme2) => {
+  return {
+    wrapper: css({
+      label: 'page-wrapper',
+      height: '100%',
+      display: 'flex',
+      flex: '1 1 0',
+      flexDirection: 'column',
+      minHeight: 0,
+    }),
+    pageContent: css({
+      label: 'page-content',
+      flexGrow: 1,
+    }),
+    pageInner: css(
+      {
+        label: 'page-inner',
+        padding: theme.spacing(2),
+        borderBottom: 'none',
+        background: theme.colors.background.primary,
+        display: 'flex',
+        flexDirection: 'column',
+        flexGrow: 1,
+        margin: theme.spacing(0, 0, 0, 0),
+      },
+      config.featureToggles.dockedMegaMenu
+        ? {
+            [theme.breakpoints.up('md')]: {
+              padding: theme.spacing(4),
+            },
+          }
+        : {
+            borderRadius: theme.shape.radius.default,
+            border: `1px solid ${theme.colors.border.weak}`,
 
-const getStyles = (theme: GrafanaTheme) => ({
-  wrapper: css`
-    position: absolute;
-    top: 0;
-    bottom: 0;
-    width: 100%;
-    background: ${theme.colors.bg1};
-  `,
-  contentWidth: (size: keyof GrafanaTheme['breakpoints']) => css`
-    .page-container {
-      max-width: ${theme.breakpoints[size]};
-    }
-  `,
-});
+            [theme.breakpoints.up('md')]: {
+              margin: theme.spacing(2, 2, 0, 1),
+              padding: theme.spacing(3),
+            },
+          }
+    ),
+
+    canvasContent: css({
+      label: 'canvas-content',
+      display: 'flex',
+      flexDirection: 'column',
+      padding: theme.spacing(2),
+      flexBasis: '100%',
+      flexGrow: 1,
+    }),
+  };
+};

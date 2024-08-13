@@ -7,23 +7,26 @@ import (
 	"github.com/grafana/grafana/pkg/expr/mathexp"
 )
 
-func nilOrNaN(f *float64) bool {
-	return f == nil || math.IsNaN(*f)
-}
+type reducer string
 
-func (cr classicReducer) ValidReduceFunc() bool {
+func (cr reducer) ValidReduceFunc() bool {
 	switch cr {
 	case "avg", "sum", "min", "max", "count", "last", "median":
 		return true
-	case "diff", "diff_abs", "percent_diff", "percent_diff_abs", "count_not_null":
+	case "diff", "diff_abs", "percent_diff", "percent_diff_abs", "count_non_null":
 		return true
 	}
 	return false
 }
 
-//nolint: gocyclo
-func (cr classicReducer) Reduce(series mathexp.Series) mathexp.Number {
+//nolint:gocyclo
+func (cr reducer) Reduce(series mathexp.Series) mathexp.Number {
 	num := mathexp.NewNumber("", nil)
+
+	if series.GetLabels() != nil {
+		num.SetLabels(series.GetLabels().Copy())
+	}
+
 	num.SetValue(nil)
 
 	if series.Len() == 0 {
@@ -33,7 +36,7 @@ func (cr classicReducer) Reduce(series mathexp.Series) mathexp.Number {
 	value := float64(0)
 	allNull := true
 
-	vF := series.Frame.Fields[series.ValueIdx]
+	vF := series.Frame.Fields[1]
 	ff := mathexp.Float64Field(*vF)
 
 	switch cr {
@@ -177,6 +180,10 @@ func calculateDiff(ff mathexp.Float64Field, allNull bool, value float64, fn func
 		}
 	}
 	return allNull, value
+}
+
+func nilOrNaN(f *float64) bool {
+	return f == nil || math.IsNaN(*f)
 }
 
 var diff = func(newest, oldest float64) float64 {

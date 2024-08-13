@@ -1,13 +1,20 @@
+import { lastValueFrom, Observable, of } from 'rxjs';
+
 import { DataQuery, DataQueryResponse, DataSourceApi, DataSourceInstanceSettings } from '@grafana/data';
-import { BackendSrvRequest, getBackendSrv } from '@grafana/runtime';
-import { Observable, of } from 'rxjs';
+import { BackendSrvRequest, getBackendSrv, isFetchError } from '@grafana/runtime';
+
+import { discoverAlertmanagerFeaturesByUrl } from '../../../features/alerting/unified/api/buildInfo';
+import { messageFromError } from '../../../features/alerting/unified/utils/redux';
+import { AlertmanagerApiFeatures } from '../../../types/unified-alerting-dto';
+
+import { AlertManagerDataSourceJsonData, AlertManagerImplementation } from './types';
 
 export type AlertManagerQuery = {
   query: string;
 } & DataQuery;
 
-export class AlertManagerDatasource extends DataSourceApi<AlertManagerQuery> {
-  constructor(public instanceSettings: DataSourceInstanceSettings) {
+export class AlertManagerDatasource extends DataSourceApi<AlertManagerQuery, AlertManagerDataSourceJsonData> {
+  constructor(public instanceSettings: DataSourceInstanceSettings<AlertManagerDataSourceJsonData>) {
     super(instanceSettings);
   }
 
@@ -35,21 +42,60 @@ export class AlertManagerDatasource extends DataSourceApi<AlertManagerQuery> {
       options.headers!.Authorization = this.instanceSettings.basicAuth;
     }
 
-    return getBackendSrv().fetch<any>(options).toPromise();
+    return lastValueFrom(getBackendSrv().fetch<any>(options));
   }
 
   async testDatasource() {
     let alertmanagerResponse;
-    let cortexAlertmanagerResponse;
+    const amUrl = this.instanceSettings.url;
 
-    try {
-      alertmanagerResponse = await this._request('/api/v2/status');
-    } catch (e) {}
-    try {
-      cortexAlertmanagerResponse = await this._request('/alertmanager/api/v2/status');
-    } catch (e) {}
+    const amFeatures: AlertmanagerApiFeatures = amUrl
+      ? await discoverAlertmanagerFeaturesByUrl(amUrl)
+      : { lazyConfigInit: false };
 
-    return alertmanagerResponse?.status === 200 || cortexAlertmanagerResponse?.status === 200
+    if (this.instanceSettings.jsonData.implementation === AlertManagerImplementation.prometheus) {
+      try {
+        alertmanagerResponse = await this._request('/alertmanager/api/v2/status');
+        if (alertmanagerResponse && alertmanagerResponse?.status === 200) {
+          return {
+            status: 'error',
+            message:
+              'It looks like you have chosen Prometheus implementation, but detected a Mimir or Cortex endpoint. Please update implementation selection and try again.',
+          };
+        }
+      } catch (e) {}
+      try {
+        alertmanagerResponse = await this._request('/api/v2/status');
+      } catch (e) {}
+    } else {
+      try {
+        alertmanagerResponse = await this._request('/api/v2/status');
+        if (alertmanagerResponse && alertmanagerResponse?.status === 200) {
+          return {
+            status: 'error',
+            message:
+              'It looks like you have chosen a Mimir or Cortex implementation, but detected a Prometheus endpoint. Please update implementation selection and try again.',
+          };
+        }
+      } catch (e) {}
+      try {
+        alertmanagerResponse = await this._request('/alertmanager/api/v2/status');
+      } catch (e) {
+        if (
+          isFetchError(e) &&
+          amFeatures.lazyConfigInit &&
+          messageFromError(e)?.includes('the Alertmanager is not configured')
+        ) {
+          return {
+            status: 'success',
+            message: 'Health check passed.',
+            details: { message: 'Mimir Alertmanager without the fallback configuration has been discovered.' },
+          };
+        }
+      }
+    }
+
+    return alertmanagerResponse?.status === 200
       ? {
           status: 'success',
           message: 'Health check passed.',

@@ -3,107 +3,128 @@ package tempo
 import (
 	"context"
 	"fmt"
-	"io/ioutil"
 	"net/http"
+	"runtime"
+	"strings"
 
-	"github.com/grafana/grafana-plugin-sdk-go/data"
-	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/models"
-	"github.com/grafana/grafana/pkg/plugins"
-
-	ot_pdata "go.opentelemetry.io/collector/consumer/pdata"
+	"github.com/grafana/grafana-plugin-sdk-go/backend"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/datasource"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/httpclient"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/instancemgmt"
+	"github.com/grafana/grafana-plugin-sdk-go/backend/log"
+	"github.com/grafana/grafana/pkg/tsdb/tempo/kinds/dataquery"
+	"github.com/grafana/tempo/pkg/tempopb"
 )
 
-type tempoExecutor struct {
-	httpClient *http.Client
+type Service struct {
+	im     instancemgmt.InstanceManager
+	logger log.Logger
 }
 
-// NewExecutor returns a tempoExecutor.
-func NewExecutor(dsInfo *models.DataSource) (plugins.DataPlugin, error) {
-	httpClient, err := dsInfo.GetHttpClient()
-	if err != nil {
-		return nil, err
-	}
-
-	return &tempoExecutor{
-		httpClient: httpClient,
-	}, nil
+// Return the file, line, and (full-path) function name of the caller
+func getRunContext() (string, int, string) {
+	pc := make([]uintptr, 10)
+	runtime.Callers(2, pc)
+	f := runtime.FuncForPC(pc[0])
+	file, line := f.FileLine(pc[0])
+	return file, line, f.Name()
 }
 
-var (
-	tlog = log.New("tsdb.tempo")
-)
+// Return a formatted string representing the execution context for the logger
+func logEntrypoint() string {
+	file, line, pathToFunction := getRunContext()
+	parts := strings.Split(pathToFunction, "/")
+	functionName := parts[len(parts)-1]
+	return fmt.Sprintf("%s:%d[%s]", file, line, functionName)
+}
 
-func (e *tempoExecutor) DataQuery(ctx context.Context, dsInfo *models.DataSource,
-	queryContext plugins.DataQuery) (plugins.DataResponse, error) {
-	refID := queryContext.Queries[0].RefID
-	queryResult := plugins.DataQueryResult{}
-	traceID := queryContext.Queries[0].Model.Get("query").MustString("")
-
-	req, err := e.createRequest(ctx, dsInfo, traceID)
-	if err != nil {
-		return plugins.DataResponse{}, err
+func ProvideService(httpClientProvider *httpclient.Provider) *Service {
+	return &Service{
+		logger: backend.NewLoggerWith("logger", "tsdb.tempo"),
+		im:     datasource.NewInstanceManager(newInstanceSettings(httpClientProvider)),
 	}
+}
 
-	resp, err := e.httpClient.Do(req)
-	if err != nil {
-		return plugins.DataResponse{}, fmt.Errorf("failed get to tempo: %w", err)
-	}
+type Datasource struct {
+	HTTPClient      *http.Client
+	StreamingClient tempopb.StreamingQuerierClient
+	URL             string
+}
 
-	defer func() {
-		if err := resp.Body.Close(); err != nil {
-			tlog.Warn("failed to close response body", "err", err)
+func newInstanceSettings(httpClientProvider *httpclient.Provider) datasource.InstanceFactoryFunc {
+	return func(ctx context.Context, settings backend.DataSourceInstanceSettings) (instancemgmt.Instance, error) {
+		ctxLogger := backend.NewLoggerWith("logger", "tsdb.tempo").FromContext(ctx)
+		opts, err := settings.HTTPClientOptions(ctx)
+		if err != nil {
+			ctxLogger.Error("Failed to get HTTP client options", "error", err, "function", logEntrypoint())
+			return nil, err
 		}
-	}()
 
-	body, err := ioutil.ReadAll(resp.Body)
-	if err != nil {
-		return plugins.DataResponse{}, err
+		client, err := httpClientProvider.New(opts)
+		if err != nil {
+			ctxLogger.Error("Failed to get HTTP client provider", "error", err, "function", logEntrypoint())
+			return nil, err
+		}
+
+		streamingClient, err := newGrpcClient(settings, opts)
+		if err != nil {
+			ctxLogger.Error("Failed to get gRPC client", "error", err, "function", logEntrypoint())
+			return nil, err
+		}
+
+		model := &Datasource{
+			HTTPClient:      client,
+			StreamingClient: streamingClient,
+			URL:             settings.URL,
+		}
+		return model, nil
 	}
-
-	if resp.StatusCode != http.StatusOK {
-		queryResult.ErrorString = fmt.Sprintf("failed to get trace with id: %s Status: %s Body: %s", traceID, resp.Status, string(body))
-		return plugins.DataResponse{
-			Results: map[string]plugins.DataQueryResult{
-				refID: queryResult,
-			},
-		}, nil
-	}
-
-	otTrace := ot_pdata.NewTraces()
-	err = otTrace.FromOtlpProtoBytes(body)
-
-	if err != nil {
-		return plugins.DataResponse{}, fmt.Errorf("failed to convert tempo response to Otlp: %w", err)
-	}
-
-	frame, err := TraceToFrame(otTrace)
-	if err != nil {
-		return plugins.DataResponse{}, fmt.Errorf("failed to transform trace %v to data frame: %w", traceID, err)
-	}
-	frame.RefID = refID
-	frames := []*data.Frame{frame}
-	queryResult.Dataframes = plugins.NewDecodedDataFrames(frames)
-
-	return plugins.DataResponse{
-		Results: map[string]plugins.DataQueryResult{
-			refID: queryResult,
-		},
-	}, nil
 }
 
-func (e *tempoExecutor) createRequest(ctx context.Context, dsInfo *models.DataSource, traceID string) (*http.Request, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", dsInfo.Url+"/api/traces/"+traceID, nil)
+func (s *Service) QueryData(ctx context.Context, req *backend.QueryDataRequest) (*backend.QueryDataResponse, error) {
+	ctxLogger := s.logger.FromContext(ctx)
+	ctxLogger.Debug("Processing queries", "queryLength", len(req.Queries), "function", logEntrypoint())
+
+	// create response struct
+	response := backend.NewQueryDataResponse()
+
+	// loop over queries and execute them individually.
+	for i, q := range req.Queries {
+		ctxLogger.Debug("Processing query", "counter", i, "function", logEntrypoint())
+		if res, err := s.query(ctx, req.PluginContext, q); err != nil {
+			ctxLogger.Error("Error processing query", "error", err)
+			return response, err
+		} else {
+			if res != nil {
+				ctxLogger.Debug("Query processed", "counter", i, "function", logEntrypoint())
+				response.Responses[q.RefID] = *res
+			} else {
+				ctxLogger.Debug("Query resulted in empty response", "counter", i, "function", logEntrypoint())
+			}
+		}
+	}
+
+	ctxLogger.Debug("All queries processed", "function", logEntrypoint())
+	return response, nil
+}
+
+func (s *Service) query(ctx context.Context, pCtx backend.PluginContext, query backend.DataQuery) (*backend.DataResponse, error) {
+	if query.QueryType == string(dataquery.TempoQueryTypeTraceId) {
+		return s.getTrace(ctx, pCtx, query)
+	}
+	return nil, fmt.Errorf("unsupported query type: '%s' for query with refID '%s'", query.QueryType, query.RefID)
+}
+
+func (s *Service) getDSInfo(ctx context.Context, pluginCtx backend.PluginContext) (*Datasource, error) {
+	i, err := s.im.Get(ctx, pluginCtx)
 	if err != nil {
 		return nil, err
 	}
 
-	if dsInfo.BasicAuth {
-		req.SetBasicAuth(dsInfo.BasicAuthUser, dsInfo.DecryptedBasicAuthPassword())
+	instance, ok := i.(*Datasource)
+	if !ok {
+		return nil, fmt.Errorf("failed to cast datsource info")
 	}
 
-	req.Header.Set("Accept", "application/protobuf")
-
-	tlog.Debug("Tempo request", "url", req.URL.String(), "headers", req.Header)
-	return req, nil
+	return instance, nil
 }

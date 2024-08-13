@@ -1,19 +1,20 @@
 package notifier
 
 import (
+	"crypto/md5"
+	"encoding/json"
 	"fmt"
-	"io/ioutil"
 	"os"
 	"path/filepath"
 
-	"github.com/grafana/alerting-api/pkg/api"
-	"github.com/grafana/grafana/pkg/infra/log"
+	alertingNotify "github.com/grafana/alerting/notify"
+	alertingTemplates "github.com/grafana/alerting/templates"
 
-	"github.com/pkg/errors"
-	"gopkg.in/yaml.v3"
+	"github.com/grafana/grafana/pkg/infra/log"
+	api "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
 )
 
-func PersistTemplates(cfg *api.PostableUserConfig, path string) ([]string, bool, error) {
+func PersistTemplates(logger log.Logger, cfg *api.PostableUserConfig, path string) ([]string, bool, error) {
 	if len(cfg.TemplateFiles) < 1 {
 		return nil, false, nil
 	}
@@ -31,39 +32,40 @@ func PersistTemplates(cfg *api.PostableUserConfig, path string) ([]string, bool,
 		}
 
 		file := filepath.Join(path, name)
-		pathSet[file] = struct{}{}
+		pathSet[name] = struct{}{}
 
 		// Check if the template file already exists and if it has changed
-		// We can safeily ignore gosec here and we've previously checked the filename is clean
+		// We can safely ignore gosec here as we've previously checked the filename is clean
 		// nolint:gosec
-		if tmpl, err := ioutil.ReadFile(file); err == nil && string(tmpl) == content {
+		if tmpl, err := os.ReadFile(file); err == nil && string(tmpl) == content {
 			// Templates file is the same we have, no-op and continue.
 			continue
 		} else if err != nil && !os.IsNotExist(err) {
 			return nil, false, err
 		}
 
-		if err := ioutil.WriteFile(file, []byte(content), 0644); err != nil {
+		// We can safely ignore gosec here as we've previously checked the filename is clean
+		// nolint:gosec
+		if err := os.WriteFile(file, []byte(content), 0644); err != nil {
 			return nil, false, fmt.Errorf("unable to create Alertmanager template file %q: %s", file, err)
 		}
-		// nolint:gosec
 
 		templatesChanged = true
 	}
 
 	// Now that we have the list of _actual_ templates, let's remove the ones that we don't need.
-	existingFiles, err := ioutil.ReadDir(path)
+	existingFiles, err := os.ReadDir(path)
 	if err != nil {
-		log.Error("unable to read directory for deleting alertmanager templates", "err", err, "path", path)
+		logger.Error("Unable to read directory for deleting Alertmanager templates", "error", err, "path", path)
 	}
 	for _, existingFile := range existingFiles {
 		p := filepath.Join(path, existingFile.Name())
-		_, ok := pathSet[p]
+		_, ok := pathSet[existingFile.Name()]
 		if !ok {
 			templatesChanged = true
 			err := os.Remove(p)
 			if err != nil {
-				log.Error("unable to delete template", "err", err, "file", p)
+				logger.Error("Unable to delete template", "error", err, "file", p)
 			}
 		}
 	}
@@ -75,25 +77,60 @@ func PersistTemplates(cfg *api.PostableUserConfig, path string) ([]string, bool,
 	return paths, templatesChanged, nil
 }
 
-func Load(rawConfig string) (*api.PostableUserConfig, error) {
+func Load(rawConfig []byte) (*api.PostableUserConfig, error) {
 	cfg := &api.PostableUserConfig{}
 
-	if err := yaml.Unmarshal([]byte(rawConfig), cfg); err != nil {
-		return nil, errors.Wrap(err, "unable to parse Alertmanager configuration")
-	}
-
-	// Taken from https://github.com/prometheus/alertmanager/blob/master/config/config.go#L170-L191
-	// Check if we have a root route. We cannot check for it in the
-	// UnmarshalYAML method because it won't be called if the input is empty
-	// (e.g. the config file is empty or only contains whitespace).
-	if cfg.AlertmanagerConfig.Route == nil {
-		return nil, errors.New("no route provided in config")
-	}
-
-	// Check if continue in root route.
-	if cfg.AlertmanagerConfig.Route.Continue {
-		return nil, errors.New("cannot have continue in root route")
+	if err := json.Unmarshal(rawConfig, cfg); err != nil {
+		return nil, fmt.Errorf("unable to parse Alertmanager configuration: %w", err)
 	}
 
 	return cfg, nil
+}
+
+// AlertingConfiguration provides configuration for an Alertmanager.
+// It implements the notify.Configuration interface.
+type AlertingConfiguration struct {
+	alertmanagerConfig    api.PostableApiAlertingConfig
+	rawAlertmanagerConfig []byte
+
+	receivers                []*alertingNotify.APIReceiver
+	receiverIntegrationsFunc func(r *alertingNotify.APIReceiver, tmpl *alertingTemplates.Template) ([]*alertingNotify.Integration, error)
+}
+
+func (a AlertingConfiguration) BuildReceiverIntegrationsFunc() func(next *alertingNotify.APIReceiver, tmpl *alertingTemplates.Template) ([]*alertingNotify.Integration, error) {
+	return func(next *alertingNotify.APIReceiver, tmpl *alertingTemplates.Template) ([]*alertingNotify.Integration, error) {
+		return a.receiverIntegrationsFunc(next, tmpl)
+	}
+}
+
+func (a AlertingConfiguration) DispatcherLimits() alertingNotify.DispatcherLimits {
+	return &nilLimits{}
+}
+
+func (a AlertingConfiguration) InhibitRules() []alertingNotify.InhibitRule {
+	return a.alertmanagerConfig.InhibitRules
+}
+
+func (a AlertingConfiguration) MuteTimeIntervals() []alertingNotify.MuteTimeInterval {
+	return a.alertmanagerConfig.MuteTimeIntervals
+}
+
+func (a AlertingConfiguration) Receivers() []*alertingNotify.APIReceiver {
+	return a.receivers
+}
+
+func (a AlertingConfiguration) RoutingTree() *alertingNotify.Route {
+	return a.alertmanagerConfig.Route.AsAMRoute()
+}
+
+func (a AlertingConfiguration) Templates() []string {
+	return a.alertmanagerConfig.Templates
+}
+
+func (a AlertingConfiguration) Hash() [16]byte {
+	return md5.Sum(a.rawAlertmanagerConfig)
+}
+
+func (a AlertingConfiguration) Raw() []byte {
+	return a.rawAlertmanagerConfig
 }

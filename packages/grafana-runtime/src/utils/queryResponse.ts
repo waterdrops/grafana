@@ -12,8 +12,15 @@ import {
   DataQuery,
   DataFrameJSON,
   dataFrameFromJSON,
+  QueryResultMetaNotice,
 } from '@grafana/data';
-import { FetchResponse } from '../services';
+
+import { FetchError, FetchResponse } from '../services';
+
+import { HealthCheckResultDetails } from './DataSourceWithBackend';
+import { toDataQueryError } from './toDataQueryError';
+
+export const cachedResponseNotice: QueryResultMetaNotice = { severity: 'info', text: 'Cached response' };
 
 /**
  * Single response object from a backend data source. Properties are optional but response should contain at least
@@ -26,6 +33,7 @@ export interface DataResponse {
   error?: string;
   refId?: string;
   frames?: DataFrameJSON[];
+  status?: number;
 
   // Legacy TSDB format...
   series?: TimeSeries[];
@@ -57,10 +65,19 @@ export function toDataQueryResponse(
   queries?: DataQuery[]
 ): DataQueryResponse {
   const rsp: DataQueryResponse = { data: [], state: LoadingState.Done };
+
+  const traceId = 'traceId' in res ? res.traceId : undefined;
+
+  if (traceId != null) {
+    rsp.traceIds = [traceId];
+  }
+
   // If the response isn't in a correct shape we just ignore the data and pass empty DataQueryResponse.
-  if ((res as FetchResponse).data?.results) {
-    const results = (res as FetchResponse).data.results;
+  const fetchResponse = res as FetchResponse;
+  if (fetchResponse.data?.results) {
+    const results = fetchResponse.data.results;
     const refIDs = queries?.length ? queries.map((q) => q.refId) : Object.keys(results);
+    const cachedResponse = isCachedResponse(fetchResponse);
     const data: DataResponse[] = [];
 
     for (const refId of refIDs) {
@@ -74,17 +91,30 @@ export function toDataQueryResponse(
 
     for (const dr of data) {
       if (dr.error) {
-        if (!rsp.error) {
-          rsp.error = {
-            refId: dr.refId,
-            message: dr.error,
-          };
-          rsp.state = LoadingState.Error;
+        const errorObj: DataQueryError = {
+          refId: dr.refId,
+          message: dr.error,
+          status: dr.status,
+        };
+        if (traceId != null) {
+          errorObj.traceId = traceId;
         }
+        if (!rsp.error) {
+          rsp.error = { ...errorObj };
+        }
+        if (rsp.errors) {
+          rsp.errors.push({ ...errorObj });
+        } else {
+          rsp.errors = [{ ...errorObj }];
+        }
+        rsp.state = LoadingState.Error;
       }
 
       if (dr.frames?.length) {
-        for (const js of dr.frames) {
+        for (let js of dr.frames) {
+          if (cachedResponse) {
+            js = addCacheNotice(js);
+          }
           const df = dataFrameFromJSON(js);
           if (!df.refId) {
             df.refId = dr.refId;
@@ -115,46 +145,77 @@ export function toDataQueryResponse(
   }
 
   // When it is not an OK response, make sure the error gets added
-  if ((res as FetchResponse).status && (res as FetchResponse).status !== 200) {
+  if (fetchResponse.status && fetchResponse.status !== 200) {
     if (rsp.state !== LoadingState.Error) {
       rsp.state = LoadingState.Error;
     }
     if (!rsp.error) {
-      rsp.error = toDataQueryError(res as DataQueryError);
+      rsp.error = toDataQueryError(res);
     }
   }
 
   return rsp;
 }
 
+function isCachedResponse(res: FetchResponse<BackendDataSourceResponse | undefined>): boolean {
+  const headers = res?.headers;
+  if (!headers || !headers.get) {
+    return false;
+  }
+  return headers.get('X-Cache') === 'HIT';
+}
+
+function addCacheNotice(frame: DataFrameJSON): DataFrameJSON {
+  return {
+    ...frame,
+    schema: {
+      ...frame.schema,
+      fields: [...(frame.schema?.fields ?? [])],
+      meta: {
+        ...frame.schema?.meta,
+        notices: [...(frame.schema?.meta?.notices ?? []), cachedResponseNotice],
+        isCachedResponse: true,
+      },
+    },
+  };
+}
+
+export interface TestingStatus {
+  message?: string | null;
+  status?: string | null;
+  details?: HealthCheckResultDetails;
+}
+
 /**
- * Convert an object into a DataQueryError -- if this is an HTTP response,
- * it will put the correct values in the error field
+ * Data sources using api/ds/query to test data sources can use this function to
+ * handle errors and convert them to TestingStatus object.
  *
- * @public
+ * If possible, this should be avoided in favor of implementing /health endpoint
+ * and testing data source with DataSourceWithBackend.testDataSource()
+ *
+ * Re-thrown errors are handled by testDataSource() in public/app/features/datasources/state/actions.ts
+ *
+ * @returns {TestingStatus}
  */
-export function toDataQueryError(err: DataQueryError | string | Object): DataQueryError {
-  const error = (err || {}) as DataQueryError;
-
-  if (!error.message) {
-    if (typeof err === 'string' || err instanceof String) {
-      return { message: err } as DataQueryError;
-    }
-
-    let message = 'Query error';
-    if (error.message) {
-      message = error.message;
-    } else if (error.data && error.data.message) {
-      message = error.data.message;
-    } else if (error.data && error.data.error) {
-      message = error.data.error;
-    } else if (error.status) {
-      message = `Query error: ${error.status} ${error.statusText}`;
-    }
-    error.message = message;
+export function toTestingStatus(err: FetchError): TestingStatus {
+  const queryResponse = toDataQueryResponse(err);
+  // POST api/ds/query errors returned as { message: string, error: string } objects
+  if (queryResponse.error?.data?.message) {
+    return {
+      status: 'error',
+      message: queryResponse.error.data.message,
+      details: queryResponse.error?.data?.error ? { message: queryResponse.error.data.error } : undefined,
+    };
+  }
+  // POST api/ds/query errors returned in results object
+  else if (queryResponse.error?.refId && queryResponse.error?.message) {
+    return {
+      status: 'error',
+      message: queryResponse.error.message,
+    };
   }
 
-  return error;
+  throw err;
 }
 
 /**
@@ -174,7 +235,7 @@ export function frameToMetricFindValue(frame: DataFrame): MetricFindValue[] {
   }
   if (field) {
     for (let i = 0; i < field.values.length; i++) {
-      values.push({ text: '' + field.values.get(i) });
+      values.push({ text: '' + field.values[i] });
     }
   }
   return values;

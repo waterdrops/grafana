@@ -1,4 +1,6 @@
-import _ from 'lodash';
+import { last } from 'lodash';
+
+import { GraphiteParserError } from './types';
 
 /**
  * Graphite-web before v1.6 returns HTTP 500 with full stack traces in an HTML page
@@ -6,10 +8,10 @@ import _ from 'lodash';
  * This function removes all HTML tags and keeps only the last line from the stack
  * trace which should be the most meaningful.
  */
-export function reduceError(error: any): any {
+export function reduceError(error: any) {
   if (error && error.status === 500 && error.data?.message?.startsWith('<body')) {
     // Remove all HTML tags and take the last line from the stack trace
-    const newMessage = _.last<string>(
+    const newMessage = last<string>(
       error.data.message
         .replace(/(<([^>]+)>)/gi, '')
         .trim()
@@ -18,4 +20,8 @@ export function reduceError(error: any): any {
     error.data.message = `Graphite encountered an unexpected error while handling your request. ${newMessage}`;
   }
   return error;
+}
+
+export function isGraphiteParserError(e: unknown): e is GraphiteParserError {
+  return typeof e === 'object' && e !== null && 'message' in e && 'pos' in e;
 }

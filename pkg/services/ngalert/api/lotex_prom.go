@@ -4,10 +4,11 @@ import (
 	"fmt"
 	"net/http"
 
-	apimodels "github.com/grafana/alerting-api/pkg/api"
 	"github.com/grafana/grafana/pkg/api/response"
 	"github.com/grafana/grafana/pkg/infra/log"
-	"github.com/grafana/grafana/pkg/models"
+	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
+	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	"github.com/grafana/grafana/pkg/web"
 )
 
 type promEndpoints struct {
@@ -37,10 +38,10 @@ func NewLotexProm(proxy *AlertingProxy, log log.Logger) *LotexProm {
 	}
 }
 
-func (p *LotexProm) RouteGetAlertStatuses(ctx *models.ReqContext) response.Response {
+func (p *LotexProm) RouteGetAlertStatuses(ctx *contextmodel.ReqContext) response.Response {
 	endpoints, err := p.getEndpoints(ctx)
 	if err != nil {
-		return response.Error(500, err.Error(), nil)
+		return ErrResp(http.StatusInternalServerError, err, "")
 	}
 
 	return p.withReq(
@@ -56,10 +57,10 @@ func (p *LotexProm) RouteGetAlertStatuses(ctx *models.ReqContext) response.Respo
 	)
 }
 
-func (p *LotexProm) RouteGetRuleStatuses(ctx *models.ReqContext) response.Response {
+func (p *LotexProm) RouteGetRuleStatuses(ctx *contextmodel.ReqContext) response.Response {
 	endpoints, err := p.getEndpoints(ctx)
 	if err != nil {
-		return response.Error(500, err.Error(), nil)
+		return ErrResp(http.StatusInternalServerError, err, "")
 	}
 
 	return p.withReq(
@@ -75,11 +76,21 @@ func (p *LotexProm) RouteGetRuleStatuses(ctx *models.ReqContext) response.Respon
 	)
 }
 
-func (p *LotexProm) getEndpoints(ctx *models.ReqContext) (*promEndpoints, error) {
-	ds, err := p.DataProxy.DatasourceCache.GetDatasource(ctx.ParamsInt64("Recipient"), ctx.SignedInUser, ctx.SkipCache)
+func (p *LotexProm) getEndpoints(ctx *contextmodel.ReqContext) (*promEndpoints, error) {
+	datasourceUID := web.Params(ctx.Req)[":DatasourceUID"]
+	if datasourceUID == "" {
+		return nil, fmt.Errorf("datasource UID is invalid")
+	}
+
+	ds, err := p.DataProxy.DataSourceCache.GetDatasourceByUID(ctx.Req.Context(), datasourceUID, ctx.SignedInUser, ctx.SkipDSCache)
 	if err != nil {
 		return nil, err
 	}
+
+	if ds.URL == "" {
+		return nil, fmt.Errorf("URL for this data source is empty")
+	}
+
 	routes, ok := dsTypeToLotexRoutes[ds.Type]
 	if !ok {
 		return nil, fmt.Errorf("unexpected datasource type. expecting loki or prometheus")

@@ -1,4 +1,4 @@
-import { getDiffText, getDiffOperationText, jsonDiff, Diff } from './utils';
+import { Diff, getDiffOperationText, getDiffText, jsonDiff } from './utils';
 
 describe('getDiffOperationText', () => {
   const cases = [
@@ -13,9 +13,13 @@ describe('getDiffOperationText', () => {
   });
 });
 
+type DiffTextCase = [Partial<Diff>, string];
 describe('getDiffText', () => {
-  const addEmptyArray = [{ op: 'add', value: [], path: ['annotations', 'list'], startLineNumber: 24 }, 'added list'];
-  const addArrayNumericProp = [
+  const addEmptyArray: DiffTextCase = [
+    { op: 'add', value: [], path: ['annotations', 'list'], startLineNumber: 24 },
+    'added list',
+  ];
+  const addArrayNumericProp: DiffTextCase = [
     {
       op: 'add',
       value: ['tag'],
@@ -23,7 +27,7 @@ describe('getDiffText', () => {
     },
     'added item 3',
   ];
-  const addArrayProp = [
+  const addArrayProp: DiffTextCase = [
     {
       op: 'add',
       value: [{ name: 'dummy target 1' }, { name: 'dummy target 2' }],
@@ -31,7 +35,7 @@ describe('getDiffText', () => {
     },
     'added 2 targets',
   ];
-  const addValueNumericProp = [
+  const addValueNumericProp: DiffTextCase = [
     {
       op: 'add',
       value: 'foo',
@@ -39,7 +43,7 @@ describe('getDiffText', () => {
     },
     'added item 3',
   ];
-  const addValueProp = [
+  const addValueProp: DiffTextCase = [
     {
       op: 'add',
       value: 'foo',
@@ -48,11 +52,11 @@ describe('getDiffText', () => {
     'added targets',
   ];
 
-  const removeEmptyArray = [
+  const removeEmptyArray: DiffTextCase = [
     { op: 'remove', originalValue: [], path: ['annotations', 'list'], startLineNumber: 24 },
     'deleted list',
   ];
-  const removeArrayNumericProp = [
+  const removeArrayNumericProp: DiffTextCase = [
     {
       op: 'remove',
       originalValue: ['tag'],
@@ -60,7 +64,7 @@ describe('getDiffText', () => {
     },
     'deleted item 3',
   ];
-  const removeArrayProp = [
+  const removeArrayProp: DiffTextCase = [
     {
       op: 'remove',
       originalValue: [{ name: 'dummy target 1' }, { name: 'dummy target 2' }],
@@ -68,7 +72,7 @@ describe('getDiffText', () => {
     },
     'deleted 2 targets',
   ];
-  const removeValueNumericProp = [
+  const removeValueNumericProp: DiffTextCase = [
     {
       op: 'remove',
       originalValue: 'foo',
@@ -76,7 +80,7 @@ describe('getDiffText', () => {
     },
     'deleted item 3',
   ];
-  const removeValueProp = [
+  const removeValueProp: DiffTextCase = [
     {
       op: 'remove',
       originalValue: 'foo',
@@ -84,7 +88,7 @@ describe('getDiffText', () => {
     },
     'deleted targets',
   ];
-  const replaceValueNumericProp = [
+  const replaceValueNumericProp: DiffTextCase = [
     {
       op: 'replace',
       originalValue: 'foo',
@@ -93,7 +97,7 @@ describe('getDiffText', () => {
     },
     'changed item 3',
   ];
-  const replaceValueProp = [
+  const replaceValueProp: DiffTextCase = [
     {
       op: 'replace',
       originalValue: 'foo',
@@ -120,8 +124,8 @@ describe('getDiffText', () => {
 
   test.each(cases)(
     'returns a semantic message based on the type of diff, the values and the location of the change',
-    (diff: Diff, expected: string) => {
-      expect(getDiffText(diff)).toBe(expected);
+    (diff: Partial<Diff>, expected: string) => {
+      expect(getDiffText(diff as unknown as Diff)).toBe(expected);
     }
   );
 });
@@ -149,7 +153,6 @@ describe('jsonDiff', () => {
       links: [],
       panels: [],
       schemaVersion: 27,
-      style: 'dark',
       tags: [],
       templating: {
         list: [],
@@ -191,7 +194,6 @@ describe('jsonDiff', () => {
         },
       ],
       schemaVersion: 27,
-      style: 'dark',
       tags: ['the tag'],
       templating: {
         list: [],
@@ -244,7 +246,7 @@ describe('jsonDiff', () => {
           op: 'add',
           originalValue: undefined,
           path: ['tags', '0'],
-          startLineNumber: 28,
+          startLineNumber: 27,
           value: 'the tag',
         },
       ],
@@ -253,7 +255,7 @@ describe('jsonDiff', () => {
           op: 'add',
           originalValue: undefined,
           path: ['timepicker', 'refresh_intervals'],
-          startLineNumber: 38,
+          startLineNumber: 37,
           value: ['5s', '10s', '30s', '1m', '5m', '15m', '30m', '1h', '2h', '1d', '2d'],
         },
       ],
@@ -262,7 +264,7 @@ describe('jsonDiff', () => {
           op: 'replace',
           originalValue: '',
           path: ['timezone'],
-          startLineNumber: 52,
+          startLineNumber: 51,
           value: 'utc',
         },
       ],
@@ -271,7 +273,7 @@ describe('jsonDiff', () => {
           op: 'replace',
           originalValue: 'test dashboard',
           path: ['title'],
-          startLineNumber: 53,
+          startLineNumber: 52,
           value: 'My favourite dashboard',
         },
       ],
@@ -280,7 +282,7 @@ describe('jsonDiff', () => {
           op: 'replace',
           originalValue: 2,
           path: ['version'],
-          startLineNumber: 55,
+          startLineNumber: 54,
           value: 3,
         },
       ],

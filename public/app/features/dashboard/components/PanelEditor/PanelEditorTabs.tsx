@@ -1,14 +1,19 @@
-import React, { FC, useEffect } from 'react';
 import { css } from '@emotion/css';
-import { IconName, Tab, TabContent, TabsBar, useForceUpdate, useStyles } from '@grafana/ui';
-import { AlertTab } from 'app/features/alerting/AlertTab';
-import { TransformationsEditor } from '../TransformationsEditor/TransformationsEditor';
-import { DashboardModel, PanelModel } from '../../state';
-import { PanelEditorTab, PanelEditorTabId } from './types';
+import React, { useEffect, useCallback } from 'react';
 import { Subscription } from 'rxjs';
+
+import { GrafanaTheme2 } from '@grafana/data';
+import { config, reportInteraction } from '@grafana/runtime';
+import { Tab, TabContent, TabsBar, toIconName, useForceUpdate, useStyles2 } from '@grafana/ui';
+import AlertTabIndex from 'app/features/alerting/AlertTabIndex';
+import { PanelAlertTab } from 'app/features/alerting/unified/PanelAlertTab';
 import { PanelQueriesChangedEvent, PanelTransformationsChangedEvent } from 'app/types/events';
+
+import { DashboardModel, PanelModel } from '../../state';
+import { TransformationsEditor } from '../TransformationsEditor/TransformationsEditor';
+
 import { PanelEditorQueries } from './PanelEditorQueries';
-import { GrafanaTheme } from '@grafana/data';
+import { PanelEditorTab, PanelEditorTabId } from './types';
 
 interface PanelEditorTabsProps {
   panel: PanelModel;
@@ -17,16 +22,32 @@ interface PanelEditorTabsProps {
   onChangeTab: (tab: PanelEditorTab) => void;
 }
 
-export const PanelEditorTabs: FC<PanelEditorTabsProps> = React.memo(({ panel, dashboard, tabs, onChangeTab }) => {
+export const PanelEditorTabs = React.memo(({ panel, dashboard, tabs, onChangeTab }: PanelEditorTabsProps) => {
   const forceUpdate = useForceUpdate();
-  const styles = useStyles(getStyles);
+  const styles = useStyles2(getStyles);
+
+  const instrumentedOnChangeTab = useCallback(
+    (tab: PanelEditorTab) => {
+      let eventName = 'panel_editor_tabs_changed';
+      if (config.featureToggles.transformationsRedesign) {
+        eventName = 'transformations_redesign_' + eventName;
+      }
+
+      if (!tab.active) {
+        reportInteraction(eventName, { tab_id: tab.id });
+      }
+
+      onChangeTab(tab);
+    },
+    [onChangeTab]
+  );
 
   useEffect(() => {
     const eventSubs = new Subscription();
     eventSubs.add(panel.events.subscribe(PanelQueriesChangedEvent, forceUpdate));
     eventSubs.add(panel.events.subscribe(PanelTransformationsChangedEvent, forceUpdate));
     return () => eventSubs.unsubscribe();
-  }, [panel, forceUpdate]);
+  }, [panel, dashboard, forceUpdate]);
 
   const activeTab = tabs.find((item) => item.active)!;
 
@@ -36,15 +57,18 @@ export const PanelEditorTabs: FC<PanelEditorTabsProps> = React.memo(({ panel, da
 
   return (
     <div className={styles.wrapper}>
-      <TabsBar className={styles.tabBar}>
+      <TabsBar className={styles.tabBar} hideBorder>
         {tabs.map((tab) => {
+          if (tab.id === PanelEditorTabId.Alert) {
+            return renderAlertTab(tab, panel, dashboard, instrumentedOnChangeTab);
+          }
           return (
             <Tab
               key={tab.id}
               label={tab.text}
               active={tab.active}
-              onChangeTab={() => onChangeTab(tab)}
-              icon={tab.icon as IconName}
+              onChangeTab={() => instrumentedOnChangeTab(tab)}
+              icon={toIconName(tab.icon)}
               counter={getCounter(panel, tab)}
             />
           );
@@ -52,7 +76,7 @@ export const PanelEditorTabs: FC<PanelEditorTabsProps> = React.memo(({ panel, da
       </TabsBar>
       <TabContent className={styles.tabContent}>
         {activeTab.id === PanelEditorTabId.Query && <PanelEditorQueries panel={panel} queries={panel.targets} />}
-        {activeTab.id === PanelEditorTabId.Alert && <AlertTab panel={panel} dashboard={dashboard} />}
+        {activeTab.id === PanelEditorTabId.Alert && <AlertTabIndex panel={panel} dashboard={dashboard} />}
         {activeTab.id === PanelEditorTabId.Transform && <TransformationsEditor panel={panel} />}
       </TabContent>
     </div>
@@ -75,7 +99,49 @@ function getCounter(panel: PanelModel, tab: PanelEditorTab) {
   return null;
 }
 
-const getStyles = (theme: GrafanaTheme) => {
+function renderAlertTab(
+  tab: PanelEditorTab,
+  panel: PanelModel,
+  dashboard: DashboardModel,
+  onChangeTab: (tab: PanelEditorTab) => void
+) {
+  const alertingDisabled = !config.alertingEnabled && !config.unifiedAlertingEnabled;
+
+  if (alertingDisabled) {
+    return null;
+  }
+
+  if (config.unifiedAlertingEnabled) {
+    return (
+      <PanelAlertTab
+        key={tab.id}
+        label={tab.text}
+        active={tab.active}
+        onChangeTab={() => onChangeTab(tab)}
+        icon={toIconName(tab.icon)}
+        panel={panel}
+        dashboard={dashboard}
+      />
+    );
+  }
+
+  if (config.alertingEnabled) {
+    return (
+      <Tab
+        key={tab.id}
+        label={tab.text}
+        active={tab.active}
+        onChangeTab={() => onChangeTab(tab)}
+        icon={toIconName(tab.icon)}
+        counter={getCounter(panel, tab)}
+      />
+    );
+  }
+
+  return null;
+}
+
+const getStyles = (theme: GrafanaTheme2) => {
   return {
     wrapper: css`
       display: flex;
@@ -83,20 +149,19 @@ const getStyles = (theme: GrafanaTheme) => {
       height: 100%;
     `,
     tabBar: css`
-      padding-left: ${theme.spacing.md};
+      padding-left: ${theme.spacing(2)};
     `,
     tabContent: css`
       padding: 0;
       display: flex;
       flex-direction: column;
-      flex-grow: 1;
+      flex: 1;
       min-height: 0;
-      background: ${theme.colors.panelBg};
-      border-right: 1px solid ${theme.colors.pageHeaderBorder};
-
-      .toolbar {
-        background: transparent;
-      }
+      background: ${theme.colors.background.primary};
+      border: 1px solid ${theme.components.panel.borderColor};
+      border-left: none;
+      border-bottom: none;
+      border-top-right-radius: ${theme.shape.borderRadius(1.5)};
     `,
   };
 };

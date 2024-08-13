@@ -1,27 +1,40 @@
-import React from 'react';
+import { css } from '@emotion/css';
 import { cloneDeep } from 'lodash';
+import React from 'react';
+
 import {
   FieldConfigOptionsRegistry,
   SelectableValue,
   isSystemOverride as isSystemOverrideGuard,
   VariableSuggestionsScope,
   DynamicConfigValue,
+  ConfigOverrideRule,
+  GrafanaTheme2,
+  fieldMatchers,
 } from '@grafana/data';
-import { Container, fieldMatchersUI, ValuePicker } from '@grafana/ui';
-import { OptionPaneRenderProps } from './types';
-import { OptionsPaneItemDescriptor } from './OptionsPaneItemDescriptor';
-import { OptionsPaneCategoryDescriptor } from './OptionsPaneCategoryDescriptor';
-import { DynamicConfigValueEditor } from './DynamicConfigValueEditor';
+import { fieldMatchersUI, useStyles2, ValuePicker } from '@grafana/ui';
 import { getDataLinksVariableSuggestions } from 'app/features/panel/panellinks/link_srv';
-import { OverrideCategoryTitle } from './OverrideCategoryTitle';
 
-export function getFieldOverrideCategories(props: OptionPaneRenderProps): OptionsPaneCategoryDescriptor[] {
+import { DynamicConfigValueEditor } from './DynamicConfigValueEditor';
+import { OptionsPaneCategoryDescriptor } from './OptionsPaneCategoryDescriptor';
+import { OptionsPaneItemDescriptor } from './OptionsPaneItemDescriptor';
+import { OverrideCategoryTitle } from './OverrideCategoryTitle';
+import { OptionPaneRenderProps } from './types';
+
+export function getFieldOverrideCategories(
+  props: OptionPaneRenderProps,
+  searchQuery: string
+): OptionsPaneCategoryDescriptor[] {
   const categories: OptionsPaneCategoryDescriptor[] = [];
   const currentFieldConfig = props.panel.fieldConfig;
   const registry = props.plugin.fieldConfigRegistry;
   const data = props.data?.series ?? [];
 
-  const onOverrideChange = (index: number, override: any) => {
+  if (registry.isEmpty()) {
+    return [];
+  }
+
+  const onOverrideChange = (index: number, override: ConfigOverrideRule) => {
     let overrides = cloneDeep(currentFieldConfig.overrides);
     overrides[index] = override;
     props.onFieldConfigsChange({ ...currentFieldConfig, overrides });
@@ -34,13 +47,19 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
   };
 
   const onOverrideAdd = (value: SelectableValue<string>) => {
+    const info = fieldMatchers.get(value.value!);
+    if (!info) {
+      return;
+    }
+
     props.onFieldConfigsChange({
       ...currentFieldConfig,
       overrides: [
         ...currentFieldConfig.overrides,
         {
           matcher: {
-            id: value.value!,
+            id: info.id,
+            options: info.defaultOptions,
           },
           properties: [],
         },
@@ -51,6 +70,7 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
   const context = {
     data,
     getSuggestions: (scope?: VariableSuggestionsScope) => getDataLinksVariableSuggestions(data, scope),
+    isOverride: true,
   };
 
   /**
@@ -88,7 +108,7 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
       onOverrideChange(idx, override);
     };
 
-    const onDynamicConfigValueAdd = (value: SelectableValue<string>) => {
+    const onDynamicConfigValueAdd = (o: ConfigOverrideRule, value: SelectableValue<string>) => {
       const registryItem = registry.get(value.value!);
       const propertyConfig: DynamicConfigValue = {
         id: registryItem.id,
@@ -96,12 +116,12 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
       };
 
       if (override.properties) {
-        override.properties.push(propertyConfig);
+        o.properties.push(propertyConfig);
       } else {
-        override.properties = [propertyConfig];
+        o.properties = [propertyConfig];
       }
 
-      onOverrideChange(idx, override);
+      onOverrideChange(idx, o);
     };
 
     /**
@@ -110,9 +130,10 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
     category.addItem(
       new OptionsPaneItemDescriptor({
         title: matcherUi.name,
-        Component: function renderMatcherUI() {
+        render: function renderMatcherUI() {
           return (
             <matcherUi.component
+              id={`${matcherUi.matcher.id}-${idx}`}
               matcher={matcherUi.matcher}
               data={props.data?.series ?? []}
               options={override.matcher.options}
@@ -134,7 +155,7 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
         continue;
       }
 
-      const onPropertyChange = (value: any) => {
+      const onPropertyChange = (value: DynamicConfigValue) => {
         override.properties[propIdx].value = value;
         onOverrideChange(idx, override);
       };
@@ -151,7 +172,7 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
         new OptionsPaneItemDescriptor({
           title: registryItemForProperty.name,
           skipField: true,
-          Component: function renderPropertyEditor() {
+          render: function renderPropertyEditor() {
             return (
               <DynamicConfigValueEditor
                 key={`${property.id}/${propIdx}`}
@@ -161,6 +182,7 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
                 property={property}
                 registry={registry}
                 context={context}
+                searchQuery={searchQuery}
               />
             );
           },
@@ -176,16 +198,17 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
         new OptionsPaneItemDescriptor({
           title: '----------',
           skipField: true,
-          Component: function renderAddPropertyButton() {
+          render: function renderAddPropertyButton() {
             return (
               <ValuePicker
+                key="Add override property"
                 label="Add override property"
                 variant="secondary"
-                isFullWidth={false}
+                isFullWidth={true}
                 icon="plus"
                 menuPlacement="auto"
                 options={configPropertiesOptions}
-                onChange={onDynamicConfigValueAdd}
+                onChange={(v) => onDynamicConfigValueAdd(override, v)}
               />
             );
           },
@@ -202,35 +225,25 @@ export function getFieldOverrideCategories(props: OptionPaneRenderProps): Option
       id: 'add button',
       customRender: function renderAddButton() {
         return (
-          <Container padding="md" key="Add override">
+          <AddOverrideButtonContainer key="Add override">
             <ValuePicker
               icon="plus"
-              label="Add a field override"
+              label="Add field override"
               variant="secondary"
-              size="sm"
               menuPlacement="auto"
-              isFullWidth={false}
+              isFullWidth={true}
+              size="md"
               options={fieldMatchersUI
                 .list()
                 .filter((o) => !o.excludeFromPicker)
                 .map<SelectableValue<string>>((i) => ({ label: i.name, value: i.id, description: i.description }))}
               onChange={(value) => onOverrideAdd(value)}
             />
-          </Container>
+          </AddOverrideButtonContainer>
         );
       },
     })
   );
-
-  //   <FeatureInfoBox
-  //   title="Overrides"
-  //   url={getDocsLink(DocsId.FieldConfigOverrides)}
-  //   className={css`
-  //     margin: ${theme.spacing.md};
-  //   `}
-  // >
-  //   Field override rules give you fine-grained control over how your data is displayed.
-  // </FeatureInfoBox>
 
   return categories;
 }
@@ -241,8 +254,8 @@ function getOverrideProperties(registry: FieldConfigOptionsRegistry) {
     .filter((o) => !o.hideFromOverrides)
     .map((item) => {
       let label = item.name;
-      if (item.category && item.category.length > 1) {
-        label = [...item.category!.slice(1), item.name].join(' > ');
+      if (item.category) {
+        label = [...item.category, item.name].join(' > ');
       }
       return {
         label,
@@ -250,4 +263,17 @@ function getOverrideProperties(registry: FieldConfigOptionsRegistry) {
         description: item.description,
       };
     });
+}
+
+function AddOverrideButtonContainer({ children }: { children: React.ReactNode }) {
+  const styles = useStyles2(getBorderTopStyles);
+  return <div className={styles}>{children}</div>;
+}
+
+function getBorderTopStyles(theme: GrafanaTheme2) {
+  return css({
+    borderTop: `1px solid ${theme.colors.border.weak}`,
+    padding: `${theme.spacing(2)}`,
+    display: 'flex',
+  });
 }

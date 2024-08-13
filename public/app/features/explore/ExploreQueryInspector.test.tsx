@@ -1,8 +1,9 @@
+import { render, screen, fireEvent } from '@testing-library/react';
 import React, { ComponentProps } from 'react';
 import { Observable } from 'rxjs';
-import { render, screen, fireEvent } from '@testing-library/react';
-import { TimeRange, LoadingState } from '@grafana/data';
-import { ExploreId } from 'app/types';
+
+import { LoadingState, InternalTimeZones, getDefaultTimeRange } from '@grafana/data';
+
 import { ExploreQueryInspector } from './ExploreQueryInspector';
 
 type ExploreQueryInspectorProps = ComponentProps<typeof ExploreQueryInspector>;
@@ -17,7 +18,7 @@ jest.mock('app/core/services/backend_srv', () => ({
       new Observable((subscriber) => {
         subscriber.next(response());
         subscriber.next(response(true));
-      }) as any,
+      }),
   },
 }));
 
@@ -27,18 +28,36 @@ jest.mock('app/core/services/context_srv', () => ({
   },
 }));
 
-const setup = () => {
+jest.mock('@grafana/runtime', () => ({
+  ...jest.requireActual('@grafana/runtime'),
+  reportInteraction: () => null,
+}));
+
+const setup = (propOverrides = {}) => {
   const props: ExploreQueryInspectorProps = {
-    loading: false,
     width: 100,
-    exploreId: ExploreId.left,
+    exploreId: 'left',
     onClose: jest.fn(),
+    timeZone: InternalTimeZones.utc,
     queryResponse: {
       state: LoadingState.Done,
       series: [],
-      timeRange: {} as TimeRange,
+      timeRange: getDefaultTimeRange(),
+      graphFrames: [],
+      logsFrames: [],
+      tableFrames: [],
+      traceFrames: [],
+      customFrames: [],
+      nodeGraphFrames: [],
+      flameGraphFrames: [],
+      rawPrometheusFrames: [],
+      graphResult: null,
+      logsResult: null,
+      tableResult: null,
+      rawPrometheusResult: null,
     },
     runQueries: jest.fn(),
+    ...propOverrides,
   };
 
   return render(<ExploreQueryInspector {...props} />);
@@ -47,16 +66,19 @@ const setup = () => {
 describe('ExploreQueryInspector', () => {
   it('should render closable drawer component', () => {
     setup();
-    expect(screen.getByTitle(/close query inspector/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/close query inspector/i)).toBeInTheDocument();
   });
-  it('should render 2 Tabs', () => {
+  it('should render 4 Tabs if queryResponse has no error', () => {
     setup();
-    expect(screen.getByLabelText(/tab stats/i)).toBeInTheDocument();
-    expect(screen.getByLabelText(/tab query inspector/i)).toBeInTheDocument();
+    expect(screen.getAllByLabelText(/tab/i)).toHaveLength(4);
   });
-  it('should display query data', () => {
+  it('should render 5 Tabs if queryResponse has error', () => {
+    setup({ queryResponse: { error: 'Bad gateway' } });
+    expect(screen.getAllByLabelText(/tab/i)).toHaveLength(5);
+  });
+  it('should display query data when click on expanding', () => {
     setup();
-    fireEvent.click(screen.getByLabelText(/tab query inspector/i));
+    fireEvent.click(screen.getByLabelText(/tab query/i));
     fireEvent.click(screen.getByText(/expand all/i));
     expect(screen.getByText(/very unique test value/i)).toBeInTheDocument();
   });
@@ -66,11 +88,11 @@ const response = (hideFromInspector = false) => ({
   status: 1,
   statusText: '',
   ok: true,
-  headers: {} as any,
+  headers: {},
   redirected: false,
   type: 'basic',
   url: '',
-  request: {} as any,
+  request: {},
   data: {
     test: {
       testKey: 'Very unique test value',

@@ -1,5 +1,6 @@
 import { OptionsPaneCategoryDescriptor } from '../OptionsPaneCategoryDescriptor';
 import { OptionsPaneItemDescriptor } from '../OptionsPaneItemDescriptor';
+
 import { OptionSearchEngine } from './OptionSearchEngine';
 
 describe('OptionSearchEngine', () => {
@@ -50,20 +51,20 @@ function getOptionCategories(): OptionsPaneCategoryDescriptor[] {
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Title',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Min',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'ASDSADASDSADA',
           description: 'DescriptionMatch',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       ),
     new OptionsPaneCategoryDescriptor({
@@ -73,19 +74,19 @@ function getOptionCategories(): OptionsPaneCategoryDescriptor[] {
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Min',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'DescriptionMatch',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Frame',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       ),
   ];
@@ -100,19 +101,19 @@ function getOverrides(): OptionsPaneCategoryDescriptor[] {
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Match by name',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Min',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Max',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       ),
     new OptionsPaneCategoryDescriptor({
@@ -122,19 +123,19 @@ function getOverrides(): OptionsPaneCategoryDescriptor[] {
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Match by name',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Threshold',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       )
       .addItem(
         new OptionsPaneItemDescriptor({
           title: 'Max',
-          Component: jest.fn(),
+          render: jest.fn(),
         })
       ),
   ];

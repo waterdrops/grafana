@@ -1,168 +1,393 @@
-import { CombinedRuleGroup, RulesSource } from 'app/types/unified-alerting';
-import React, { FC, useMemo, useState, Fragment } from 'react';
-import { Icon, Tooltip, useStyles } from '@grafana/ui';
-import { GrafanaTheme } from '@grafana/data';
 import { css } from '@emotion/css';
-import { isAlertingRule } from '../../utils/rules';
-import { PromAlertingRuleState } from 'app/types/unified-alerting-dto';
-import { StateColoredText } from '../StateColoredText';
-import { CollapseToggle } from '../CollapseToggle';
-import { RulesTable } from './RulesTable';
-import { GRAFANA_RULES_SOURCE_NAME, isCloudRulesSource } from '../../utils/datasource';
-import { ActionIcon } from './ActionIcon';
 import pluralize from 'pluralize';
+import React, { useEffect, useState } from 'react';
+
+import { GrafanaTheme2 } from '@grafana/data';
+import { Badge, ConfirmModal, HorizontalGroup, Icon, Spinner, Tooltip, useStyles2, Stack } from '@grafana/ui';
+import { useDispatch } from 'app/types';
+import { CombinedRuleGroup, CombinedRuleNamespace } from 'app/types/unified-alerting';
+
+import { logInfo, LogMessages } from '../../Analytics';
+import { useFolder } from '../../hooks/useFolder';
 import { useHasRuler } from '../../hooks/useHasRuler';
+import { deleteRulesGroupAction } from '../../state/actions';
+import { useRulesAccess } from '../../utils/accessControlHooks';
+import { GRAFANA_RULES_SOURCE_NAME, isCloudRulesSource } from '../../utils/datasource';
+import { makeFolderLink, makeFolderSettingsLink } from '../../utils/misc';
+import { isFederatedRuleGroup, isGrafanaRulerRule } from '../../utils/rules';
+import { CollapseToggle } from '../CollapseToggle';
+import { RuleLocation } from '../RuleLocation';
+import { GrafanaRuleFolderExporter } from '../export/GrafanaRuleFolderExporter';
+import { GrafanaRuleGroupExporter } from '../export/GrafanaRuleGroupExporter';
+
+import { ActionIcon } from './ActionIcon';
+import { EditCloudGroupModal } from './EditRuleGroupModal';
+import { ReorderCloudGroupModal } from './ReorderRuleGroupModal';
+import { RuleGroupStats } from './RuleStats';
+import { RulesTable } from './RulesTable';
+
+type ViewMode = 'grouped' | 'list';
+
 interface Props {
-  namespace: string;
-  rulesSource: RulesSource;
+  namespace: CombinedRuleNamespace;
   group: CombinedRuleGroup;
+  expandAll: boolean;
+  viewMode: ViewMode;
 }
 
-export const RulesGroup: FC<Props> = React.memo(({ group, namespace, rulesSource }) => {
-  const styles = useStyles(getStyles);
+export const RulesGroup = React.memo(({ group, namespace, expandAll, viewMode }: Props) => {
+  const { rulesSource } = namespace;
+  const dispatch = useDispatch();
+  const styles = useStyles2(getStyles);
 
-  const [isCollapsed, setIsCollapsed] = useState(true);
+  const [isEditingGroup, setIsEditingGroup] = useState(false);
+  const [isDeletingGroup, setIsDeletingGroup] = useState(false);
+  const [isReorderingGroup, setIsReorderingGroup] = useState(false);
+  const [isExporting, setIsExporting] = useState<'group' | 'folder' | undefined>(undefined);
+  const [isCollapsed, setIsCollapsed] = useState(!expandAll);
 
-  const hasRuler = useHasRuler(rulesSource);
+  const { canEditRules } = useRulesAccess();
 
-  const stats = useMemo(
-    (): Record<PromAlertingRuleState, number> =>
-      group.rules.reduce<Record<PromAlertingRuleState, number>>(
-        (stats, rule) => {
-          if (rule.promRule && isAlertingRule(rule.promRule)) {
-            stats[rule.promRule.state] += 1;
-          }
-          return stats;
-        },
-        {
-          [PromAlertingRuleState.Firing]: 0,
-          [PromAlertingRuleState.Pending]: 0,
-          [PromAlertingRuleState.Inactive]: 0,
-        }
-      ),
-    [group]
-  );
+  useEffect(() => {
+    setIsCollapsed(!expandAll);
+  }, [expandAll]);
 
-  const statsComponents: React.ReactNode[] = [];
-  if (stats[PromAlertingRuleState.Firing]) {
-    statsComponents.push(
-      <StateColoredText key="firing" status={PromAlertingRuleState.Firing}>
-        {stats[PromAlertingRuleState.Firing]} firing
-      </StateColoredText>
-    );
-  }
-  if (stats[PromAlertingRuleState.Pending]) {
-    statsComponents.push(
-      <StateColoredText key="pending" status={PromAlertingRuleState.Pending}>
-        {stats[PromAlertingRuleState.Pending]} pending
-      </StateColoredText>
-    );
-  }
+  const { hasRuler, rulerRulesLoaded } = useHasRuler();
+  const rulerRule = group.rules[0]?.rulerRule;
+  const folderUID = (rulerRule && isGrafanaRulerRule(rulerRule) && rulerRule.grafana_alert.namespace_uid) || undefined;
+  const { folder } = useFolder(folderUID);
+
+  // group "is deleting" if rules source has ruler, but this group has no rules that are in ruler
+  const isDeleting =
+    hasRuler(rulesSource) && rulerRulesLoaded(rulesSource) && !group.rules.find((rule) => !!rule.rulerRule);
+  const isFederated = isFederatedRuleGroup(group);
+
+  // check if group has provisioned items
+  const isProvisioned = group.rules.some((rule) => {
+    return isGrafanaRulerRule(rule.rulerRule) && rule.rulerRule.grafana_alert.provenance;
+  });
+
+  // check what view mode we are in
+  const isListView = viewMode === 'list';
+  const isGroupView = viewMode === 'grouped';
+
+  const deleteGroup = () => {
+    dispatch(deleteRulesGroupAction(namespace, group));
+    setIsDeletingGroup(false);
+  };
 
   const actionIcons: React.ReactNode[] = [];
-  if (hasRuler) {
-    actionIcons.push(<ActionIcon key="edit" icon="pen" tooltip="edit" />);
+
+  // for grafana, link to folder views
+  if (isDeleting) {
+    actionIcons.push(
+      <HorizontalGroup key="is-deleting">
+        <Spinner />
+        deleting
+      </HorizontalGroup>
+    );
+  } else if (rulesSource === GRAFANA_RULES_SOURCE_NAME) {
+    if (folderUID) {
+      const baseUrl = makeFolderLink(folderUID);
+      if (folder?.canSave) {
+        if (isGroupView && !isProvisioned) {
+          actionIcons.push(
+            <ActionIcon
+              aria-label="edit rule group"
+              data-testid="edit-group"
+              key="edit"
+              icon="pen"
+              tooltip="edit rule group"
+              onClick={() => setIsEditingGroup(true)}
+            />
+          );
+          actionIcons.push(
+            <ActionIcon
+              aria-label="re-order rules"
+              data-testid="reorder-group"
+              key="reorder"
+              icon="exchange-alt"
+              tooltip="reorder rules"
+              className={styles.rotate90}
+              onClick={() => setIsReorderingGroup(true)}
+            />
+          );
+        }
+        if (isListView) {
+          actionIcons.push(
+            <ActionIcon
+              aria-label="go to folder"
+              key="goto"
+              icon="folder-open"
+              tooltip="go to folder"
+              to={baseUrl}
+              target="__blank"
+            />
+          );
+
+          if (folder?.canAdmin) {
+            actionIcons.push(
+              <ActionIcon
+                aria-label="manage permissions"
+                key="manage-perms"
+                icon="lock"
+                tooltip="manage permissions"
+                to={baseUrl + '/permissions'}
+                target="__blank"
+              />
+            );
+          }
+        }
+      }
+      if (folder) {
+        if (isListView) {
+          actionIcons.push(
+            <ActionIcon
+              aria-label="export rule folder"
+              data-testid="export-folder"
+              key="export-folder"
+              icon="download-alt"
+              tooltip="Export rules folder"
+              onClick={() => setIsExporting('folder')}
+            />
+          );
+        } else if (isGroupView) {
+          actionIcons.push(
+            <ActionIcon
+              aria-label="export rule group"
+              data-testid="export-group"
+              key="export-group"
+              icon="download-alt"
+              tooltip="Export rule group"
+              onClick={() => setIsExporting('group')}
+            />
+          );
+        }
+      }
+    }
+  } else if (canEditRules(rulesSource.name) && hasRuler(rulesSource)) {
+    if (!isFederated) {
+      actionIcons.push(
+        <ActionIcon
+          aria-label="edit rule group"
+          data-testid="edit-group"
+          key="edit"
+          icon="pen"
+          tooltip="edit rule group"
+          onClick={() => setIsEditingGroup(true)}
+        />
+      );
+      actionIcons.push(
+        <ActionIcon
+          aria-label="re-order rules"
+          data-testid="reorder-group"
+          key="reorder"
+          icon="exchange-alt"
+          tooltip="re-order rules"
+          className={styles.rotate90}
+          onClick={() => setIsReorderingGroup(true)}
+        />
+      );
+    }
+
+    actionIcons.push(
+      <ActionIcon
+        aria-label="delete rule group"
+        data-testid="delete-group"
+        key="delete-group"
+        icon="trash-alt"
+        tooltip="delete rule group"
+        onClick={() => setIsDeletingGroup(true)}
+      />
+    );
   }
-  if (rulesSource === GRAFANA_RULES_SOURCE_NAME) {
-    actionIcons.push(<ActionIcon key="manage-perms" icon="lock" tooltip="manage permissions" />);
-  }
+
+  // ungrouped rules are rules that are in the "default" group name
+  const groupName = isListView ? (
+    <RuleLocation namespace={namespace.name} />
+  ) : (
+    <RuleLocation namespace={namespace.name} group={group.name} />
+  );
+
+  const closeEditModal = (saved = false) => {
+    if (!saved) {
+      logInfo(LogMessages.leavingRuleGroupEdit);
+    }
+    setIsEditingGroup(false);
+  };
 
   return (
     <div className={styles.wrapper} data-testid="rule-group">
       <div className={styles.header} data-testid="rule-group-header">
         <CollapseToggle
+          size="sm"
           className={styles.collapseToggle}
           isCollapsed={isCollapsed}
           onToggle={setIsCollapsed}
           data-testid="group-collapse-toggle"
         />
-        <Icon name={isCollapsed ? 'folder-open' : 'folder'} />
+        <Icon name={isCollapsed ? 'folder' : 'folder-open'} />
         {isCloudRulesSource(rulesSource) && (
           <Tooltip content={rulesSource.name} placement="top">
-            <img className={styles.dataSourceIcon} src={rulesSource.meta.info.logos.small} />
+            <img
+              alt={rulesSource.meta.name}
+              className={styles.dataSourceIcon}
+              src={rulesSource.meta.info.logos.small}
+            />
           </Tooltip>
         )}
-        <h6 className={styles.heading}>
-          {namespace && `${namespace} > `}
-          {group.name}
-        </h6>
+        {
+          // eslint-disable-next-line
+          <div className={styles.groupName} onClick={() => setIsCollapsed(!isCollapsed)}>
+            {isFederated && <Badge color="purple" text="Federated" />} {groupName}
+          </div>
+        }
         <div className={styles.spacer} />
         <div className={styles.headerStats}>
-          {group.rules.length} {pluralize('rule', group.rules.length)}
-          {!!statsComponents.length && (
-            <>
-              :{' '}
-              {statsComponents.reduce<React.ReactNode[]>(
-                (prev, curr, idx) => (prev.length ? [prev, <Fragment key={idx}>, </Fragment>, curr] : [curr]),
-                []
-              )}
-            </>
-          )}
+          <RuleGroupStats group={group} />
         </div>
+        {isProvisioned && (
+          <>
+            <div className={styles.actionsSeparator}>|</div>
+            <div className={styles.actionIcons}>
+              <Badge color="purple" text="Provisioned" />
+            </div>
+          </>
+        )}
         {!!actionIcons.length && (
           <>
             <div className={styles.actionsSeparator}>|</div>
-            <div className={styles.actionIcons}>{actionIcons}</div>
+            <div className={styles.actionIcons}>
+              <Stack gap={0.5}>{actionIcons}</Stack>
+            </div>
           </>
         )}
       </div>
-      {!isCollapsed && <RulesTable rulesSource={rulesSource} namespace={namespace} group={group} />}
+      {!isCollapsed && (
+        <RulesTable
+          showSummaryColumn={true}
+          className={styles.rulesTable}
+          showGuidelines={true}
+          showNextEvaluationColumn={Boolean(group.interval)}
+          rules={group.rules}
+        />
+      )}
+      {isEditingGroup && (
+        <EditCloudGroupModal
+          namespace={namespace}
+          group={group}
+          onClose={() => closeEditModal()}
+          folderUrl={folder?.canEdit ? makeFolderSettingsLink(folder) : undefined}
+        />
+      )}
+      {isReorderingGroup && (
+        <ReorderCloudGroupModal group={group} namespace={namespace} onClose={() => setIsReorderingGroup(false)} />
+      )}
+      <ConfirmModal
+        isOpen={isDeletingGroup}
+        title="Delete group"
+        body={
+          <div>
+            <p>
+              Deleting &quot;<strong>{group.name}</strong>&quot; will permanently remove the group and{' '}
+              {group.rules.length} alert {pluralize('rule', group.rules.length)} belonging to it.
+            </p>
+            <p>Are you sure you want to delete this group?</p>
+          </div>
+        }
+        onConfirm={deleteGroup}
+        onDismiss={() => setIsDeletingGroup(false)}
+        confirmText="Delete"
+      />
+      {folder && isExporting === 'folder' && (
+        <GrafanaRuleFolderExporter folder={folder} onClose={() => setIsExporting(undefined)} />
+      )}
+      {folder && isExporting === 'group' && (
+        <GrafanaRuleGroupExporter
+          folderUid={folder.uid}
+          groupName={group.name}
+          onClose={() => setIsExporting(undefined)}
+        />
+      )}
     </div>
   );
 });
 
 RulesGroup.displayName = 'RulesGroup';
 
-export const getStyles = (theme: GrafanaTheme) => ({
-  wrapper: css`
-    & + & {
-      margin-top: ${theme.spacing.md};
-    }
-  `,
-  header: css`
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    padding: ${theme.spacing.sm} ${theme.spacing.sm} ${theme.spacing.sm} 0;
-    background-color: ${theme.colors.bg2};
-  `,
-  headerStats: css`
-    span {
-      vertical-align: middle;
-    }
-  `,
-  heading: css`
-    margin-left: ${theme.spacing.sm};
-    margin-bottom: 0;
-  `,
-  spacer: css`
-    flex: 1;
-  `,
-  collapseToggle: css`
-    background: none;
-    border: none;
-    margin-top: -${theme.spacing.sm};
-    margin-bottom: -${theme.spacing.sm};
+export const getStyles = (theme: GrafanaTheme2) => {
+  return {
+    wrapper: css``,
+    header: css`
+      display: flex;
+      flex-direction: row;
+      align-items: center;
+      padding: ${theme.spacing(1)} ${theme.spacing(1)} ${theme.spacing(1)} 0;
+      flex-wrap: nowrap;
+      border-bottom: 1px solid ${theme.colors.border.weak};
 
-    svg {
+      &:hover {
+        background-color: ${theme.components.table.rowHoverBackground};
+      }
+    `,
+    headerStats: css`
+      flex-shrink: 0;
+
+      span {
+        vertical-align: middle;
+      }
+
+      ${theme.breakpoints.down('sm')} {
+        order: 2;
+        width: 100%;
+        padding-left: ${theme.spacing(1)};
+      }
+    `,
+    groupName: css`
+      margin-left: ${theme.spacing(1)};
       margin-bottom: 0;
-    }
-  `,
-  dataSourceIcon: css`
-    width: ${theme.spacing.md};
-    height: ${theme.spacing.md};
-    margin-left: ${theme.spacing.md};
-  `,
-  dataSourceOrigin: css`
-    margin-right: 1em;
-    color: ${theme.colors.textFaint};
-  `,
-  actionsSeparator: css`
-    margin: 0 ${theme.spacing.sm};
-  `,
-  actionIcons: css`
-    & > * + * {
-      margin-left: ${theme.spacing.sm};
-    }
-  `,
-});
+      cursor: pointer;
+
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    `,
+    spacer: css`
+      flex: 1;
+    `,
+    collapseToggle: css`
+      background: none;
+      border: none;
+      margin-top: -${theme.spacing(1)};
+      margin-bottom: -${theme.spacing(1)};
+
+      svg {
+        margin-bottom: 0;
+      }
+    `,
+    dataSourceIcon: css`
+      width: ${theme.spacing(2)};
+      height: ${theme.spacing(2)};
+      margin-left: ${theme.spacing(2)};
+    `,
+    dataSourceOrigin: css`
+      margin-right: 1em;
+      color: ${theme.colors.text.disabled};
+    `,
+    actionsSeparator: css`
+      margin: 0 ${theme.spacing(2)};
+    `,
+    actionIcons: css`
+      width: 80px;
+      align-items: center;
+
+      flex-shrink: 0;
+    `,
+    rulesTable: css`
+      margin: ${theme.spacing(2, 0)};
+    `,
+    rotate90: css`
+      transform: rotate(90deg);
+    `,
+  };
+};

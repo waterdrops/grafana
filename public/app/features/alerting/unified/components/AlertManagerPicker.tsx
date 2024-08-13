@@ -1,46 +1,63 @@
-import { SelectableValue } from '@grafana/data';
-import { DataSourceType, GRAFANA_RULES_SOURCE_NAME } from '../utils/datasource';
-import React, { FC, useMemo } from 'react';
-import { Select } from '@grafana/ui';
-import { getAllDataSources } from '../utils/config';
+import { css } from '@emotion/css';
+import React, { useMemo } from 'react';
+
+import { GrafanaTheme2, SelectableValue } from '@grafana/data';
+import { InlineField, Select, useStyles2 } from '@grafana/ui';
+
+import { useAlertmanager } from '../state/AlertmanagerContext';
+import { AlertManagerDataSource, GRAFANA_RULES_SOURCE_NAME } from '../utils/datasource';
 
 interface Props {
-  onChange: (alertManagerSourceName?: string) => void;
-  current?: string;
+  disabled?: boolean;
 }
 
-export const AlertManagerPicker: FC<Props> = ({ onChange, current }) => {
+function getAlertManagerLabel(alertManager: AlertManagerDataSource) {
+  return alertManager.name === GRAFANA_RULES_SOURCE_NAME ? 'Grafana' : alertManager.name.slice(0, 37);
+}
+
+export const AlertManagerPicker = ({ disabled = false }: Props) => {
+  const styles = useStyles2(getStyles);
+
+  const { selectedAlertmanager, availableAlertManagers, setSelectedAlertmanager } = useAlertmanager();
+
   const options: Array<SelectableValue<string>> = useMemo(() => {
-    return [
-      {
-        label: 'Grafana',
-        value: GRAFANA_RULES_SOURCE_NAME,
-        imgUrl: 'public/img/grafana_icon.svg',
-        meta: {},
-      },
-      ...getAllDataSources()
-        .filter((ds) => ds.type === DataSourceType.Alertmanager)
-        .map((ds) => ({
-          label: ds.name.substr(0, 37),
-          value: ds.name,
-          imgUrl: ds.meta.info.logos.small,
-          meta: ds.meta,
-        })),
-    ];
-  }, []);
+    return availableAlertManagers.map((ds) => ({
+      label: getAlertManagerLabel(ds),
+      value: ds.name,
+      imgUrl: ds.imgUrl,
+      meta: ds.meta,
+    }));
+  }, [availableAlertManagers]);
 
   return (
-    <Select
-      className="ds-picker select-container"
-      isMulti={false}
-      isClearable={false}
-      backspaceRemovesValue={false}
-      onChange={(value) => onChange(value.value)}
-      options={options}
-      maxMenuHeight={500}
-      noOptionsMessage="No datasources found"
-      value={current}
-      getOptionLabel={(o) => o.label}
-    />
+    <InlineField
+      className={styles.field}
+      label={disabled ? 'Alertmanager' : 'Choose Alertmanager'}
+      disabled={disabled || options.length === 1}
+      data-testid="alertmanager-picker"
+    >
+      <Select
+        aria-label={disabled ? 'Alertmanager' : 'Choose Alertmanager'}
+        width={29}
+        className="ds-picker select-container"
+        backspaceRemovesValue={false}
+        onChange={(value) => {
+          if (value?.value) {
+            setSelectedAlertmanager(value.value);
+          }
+        }}
+        options={options}
+        maxMenuHeight={500}
+        noOptionsMessage="No datasources found"
+        value={selectedAlertmanager}
+        getOptionLabel={(o) => o.label}
+      />
+    </InlineField>
   );
 };
+
+const getStyles = (theme: GrafanaTheme2) => ({
+  field: css`
+    margin: 0;
+  `,
+});

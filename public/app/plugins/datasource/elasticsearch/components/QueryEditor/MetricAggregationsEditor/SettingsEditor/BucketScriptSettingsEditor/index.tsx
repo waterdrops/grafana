@@ -1,32 +1,35 @@
-import React, { Fragment, FunctionComponent, useEffect } from 'react';
-import { Input, InlineLabel } from '@grafana/ui';
-import { MetricAggregationAction } from '../../state/types';
-import { changeMetricAttribute } from '../../state/actions';
 import { css } from '@emotion/css';
-import { AddRemove } from '../../../../AddRemove';
+import { uniqueId } from 'lodash';
+import React, { Fragment, useEffect } from 'react';
+
+import { Input, InlineLabel } from '@grafana/ui';
+
 import { useStatelessReducer, useDispatch } from '../../../../../hooks/useStatelessReducer';
+import { BucketScript, MetricAggregation } from '../../../../../types';
+import { AddRemove } from '../../../../AddRemove';
 import { MetricPicker } from '../../../../MetricPicker';
-import { reducer } from './state/reducer';
+import { changeMetricAttribute } from '../../state/actions';
+import { SettingField } from '../SettingField';
+
 import {
   addPipelineVariable,
   removePipelineVariable,
   renamePipelineVariable,
   changePipelineVariableMetric,
 } from './state/actions';
-import { SettingField } from '../SettingField';
-import { BucketScript, MetricAggregation } from '../../aggregations';
-import { uniqueId } from 'lodash';
+import { reducer } from './state/reducer';
 
 interface Props {
   value: BucketScript;
   previousMetrics: MetricAggregation[];
 }
 
-export const BucketScriptSettingsEditor: FunctionComponent<Props> = ({ value, previousMetrics }) => {
-  const upperStateDispatch = useDispatch<MetricAggregationAction<BucketScript>>();
+export const BucketScriptSettingsEditor = ({ value, previousMetrics }: Props) => {
+  const upperStateDispatch = useDispatch();
 
   const dispatch = useStatelessReducer(
-    (newState) => upperStateDispatch(changeMetricAttribute(value, 'pipelineVariables', newState)),
+    (newValue) =>
+      upperStateDispatch(changeMetricAttribute({ metric: value, attribute: 'pipelineVariables', newValue })),
     value.pipelineVariables,
     reducer
   );
@@ -72,12 +75,13 @@ export const BucketScriptSettingsEditor: FunctionComponent<Props> = ({ value, pr
                 `}
               >
                 <Input
+                  aria-label="Variable name"
                   defaultValue={pipelineVar.name}
                   placeholder="Variable Name"
-                  onBlur={(e) => dispatch(renamePipelineVariable(e.target.value, index))}
+                  onBlur={(e) => dispatch(renamePipelineVariable({ newName: e.target.value, index }))}
                 />
                 <MetricPicker
-                  onChange={(e) => dispatch(changePipelineVariableMetric(e.value!.id, index))}
+                  onChange={(e) => dispatch(changePipelineVariableMetric({ newMetric: e.value!.id, index }))}
                   options={previousMetrics}
                   value={pipelineVar.pipelineAgg}
                 />

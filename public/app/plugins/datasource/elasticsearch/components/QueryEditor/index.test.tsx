@@ -1,10 +1,15 @@
-import React from 'react';
 import { fireEvent, render, screen } from '@testing-library/react';
-import { QueryEditor } from '.';
+import React from 'react';
+
 import { ElasticDatasource } from '../../datasource';
 import { ElasticsearchQuery } from '../../types';
 
+import { QueryEditor } from '.';
+
 const noop = () => void 0;
+const datasourceMock = {
+  getDatabaseVersion: () => Promise.resolve(null),
+} as ElasticDatasource;
 
 describe('QueryEditor', () => {
   describe('Alias Field', () => {
@@ -17,15 +22,20 @@ describe('QueryEditor', () => {
         metrics: [
           {
             id: '1',
-            type: 'raw_data',
+            type: 'count',
           },
         ],
-        bucketAggs: [],
+        bucketAggs: [
+          {
+            type: 'date_histogram',
+            id: '2',
+          },
+        ],
       };
 
       const onChange = jest.fn<void, [ElasticsearchQuery]>();
 
-      render(<QueryEditor query={query} datasource={{} as ElasticDatasource} onChange={onChange} onRunQuery={noop} />);
+      render(<QueryEditor query={query} datasource={datasourceMock} onChange={onChange} onRunQuery={noop} />);
 
       let aliasField = screen.getByLabelText('Alias') as HTMLInputElement;
 
@@ -46,7 +56,7 @@ describe('QueryEditor', () => {
       expect(onChange.mock.calls[0][0].alias).toBe(newAlias);
     });
 
-    it('Should be disabled if last bucket aggregation is not Date Histogram', () => {
+    it('Should not be shown if last bucket aggregation is not Date Histogram', () => {
       const query: ElasticsearchQuery = {
         refId: 'A',
         query: '',
@@ -59,12 +69,12 @@ describe('QueryEditor', () => {
         bucketAggs: [{ id: '2', type: 'terms' }],
       };
 
-      render(<QueryEditor query={query} datasource={{} as ElasticDatasource} onChange={noop} onRunQuery={noop} />);
+      render(<QueryEditor query={query} datasource={datasourceMock} onChange={noop} onRunQuery={noop} />);
 
-      expect(screen.getByLabelText('Alias')).toBeDisabled();
+      expect(screen.queryByLabelText('Alias')).toBeNull();
     });
 
-    it('Should be enabled if last bucket aggregation is Date Histogram', () => {
+    it('Should be shown if last bucket aggregation is Date Histogram', () => {
       const query: ElasticsearchQuery = {
         refId: 'A',
         query: '',
@@ -77,9 +87,46 @@ describe('QueryEditor', () => {
         bucketAggs: [{ id: '2', type: 'date_histogram' }],
       };
 
-      render(<QueryEditor query={query} datasource={{} as ElasticDatasource} onChange={noop} onRunQuery={noop} />);
+      render(<QueryEditor query={query} datasource={datasourceMock} onChange={noop} onRunQuery={noop} />);
 
       expect(screen.getByLabelText('Alias')).toBeEnabled();
     });
+  });
+
+  it('Should NOT show Bucket Aggregations Editor if query contains a "singleMetric" metric', () => {
+    const query: ElasticsearchQuery = {
+      refId: 'A',
+      query: '',
+      metrics: [
+        {
+          id: '1',
+          type: 'logs',
+        },
+      ],
+      // Even if present, this shouldn't be shown in the UI
+      bucketAggs: [{ id: '2', type: 'date_histogram' }],
+    };
+
+    render(<QueryEditor query={query} datasource={datasourceMock} onChange={noop} onRunQuery={noop} />);
+
+    expect(screen.queryByLabelText('Group By')).not.toBeInTheDocument();
+  });
+
+  it('Should show Bucket Aggregations Editor if query does NOT contains a "singleMetric" metric', () => {
+    const query: ElasticsearchQuery = {
+      refId: 'A',
+      query: '',
+      metrics: [
+        {
+          id: '1',
+          type: 'avg',
+        },
+      ],
+      bucketAggs: [{ id: '2', type: 'date_histogram' }],
+    };
+
+    render(<QueryEditor query={query} datasource={datasourceMock} onChange={noop} onRunQuery={noop} />);
+
+    expect(screen.getByText('Group By')).toBeInTheDocument();
   });
 });

@@ -1,25 +1,16 @@
-import { locationService } from '@grafana/runtime';
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import React from 'react';
-import { Provider } from 'react-redux';
-import createMockStore from 'redux-mock-store';
+
+import { locationService } from '@grafana/runtime';
+
 import { PanelNotSupported, Props } from './PanelNotSupported';
 import { PanelEditorTabId } from './types';
 
 const setupTestContext = (options: Partial<Props>) => {
-  const defaults: Props = {
-    message: '',
-    dispatch: jest.fn(),
-  };
-  const store = createMockStore();
-
+  const defaults: Props = { message: '' };
   const props = { ...defaults, ...options };
-  render(
-    <Provider store={store()}>
-      <PanelNotSupported {...props} />
-    </Provider>
-  );
+  render(<PanelNotSupported {...props} />);
 
   return { props };
 };
@@ -39,9 +30,9 @@ describe('PanelNotSupported', () => {
   });
 
   describe('when the back to queries button is clicked', () => {
-    it('then correct action should be dispatched', () => {
+    it('then correct action should be dispatched', async () => {
       setupTestContext({});
-      userEvent.click(screen.getByRole('button', { name: /go back to queries/i }));
+      await userEvent.click(screen.getByRole('button', { name: /go back to queries/i }));
       expect(locationService.getSearchObject().tab).toBe(PanelEditorTabId.Query);
     });
   });

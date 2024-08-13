@@ -1,9 +1,10 @@
-import { Story, Meta } from '@storybook/react';
-import { withCenteredStory } from '../../utils/storybook/withCenteredStory';
-import { Cascader } from '@grafana/ui';
-import { CascaderOption, CascaderProps } from './Cascader';
-import mdx from './Cascader.mdx';
+import { StoryFn, Meta } from '@storybook/react';
 import React from 'react';
+
+import { Cascader } from '@grafana/ui';
+
+import { CascaderOption } from './Cascader';
+import mdx from './Cascader.mdx';
 
 const onSelect = (val: string) => console.log(val);
 const options = [
@@ -31,19 +32,24 @@ const options = [
   },
 ];
 
-export default {
+const meta: Meta<typeof Cascader> = {
   title: 'Forms/Cascader',
   component: Cascader,
-  decorators: [withCenteredStory],
   parameters: {
     docs: {
       page: mdx,
     },
-    knobs: {
-      disable: true,
-    },
     controls: {
-      exclude: ['placeholder', 'initialValue', 'changeOnSelect'],
+      exclude: [
+        'placeholder',
+        'initialValue',
+        'changeOnSelect',
+        'onSelect',
+        'loadData',
+        'onChange',
+        'onPopupVisibleChange',
+        'formatCreateLabel',
+      ],
     },
   },
   args: {
@@ -53,9 +59,9 @@ export default {
   argTypes: {
     width: { control: { type: 'range', min: 0, max: 70 } },
   },
-} as Meta;
+};
 
-const Template: Story<CascaderProps> = (args) => <Cascader {...args} />;
+const Template: StoryFn<typeof Cascader> = (args) => <Cascader {...args} />;
 
 export const Simple = Template.bind({});
 Simple.args = {
@@ -92,3 +98,5 @@ export const WithOptionsStateUpdate = () => {
 
   return <Cascader options={updatedOptions} onSelect={onSelect} />;
 };
+
+export default meta;

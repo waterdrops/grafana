@@ -1,19 +1,14 @@
-import {
-  compareArrayValues,
-  compareDataFrameStructures,
-  DataFrame,
-  DataQueryError,
-  LoadingState,
-  PanelData,
-} from '@grafana/data';
 import { useEffect, useRef, useState } from 'react';
-import { PanelModel } from '../../state';
 import { Unsubscribable } from 'rxjs';
+
+import { LoadingState, PanelData } from '@grafana/data';
+
 import { GetDataOptions } from '../../../query/state/PanelQueryRunner';
+import { PanelModel } from '../../state';
 
 interface UsePanelLatestData {
   data?: PanelData;
-  error?: DataQueryError;
+  hasError: boolean;
   isLoading: boolean;
   hasSeries: boolean;
 }
@@ -30,17 +25,17 @@ export const usePanelLatestData = (
   const [latestData, setLatestData] = useState<PanelData>();
 
   useEffect(() => {
-    let last: DataFrame[] = [];
+    let lastRev = -1;
     let lastUpdate = 0;
 
     querySubscription.current = panel
       .getQueryRunner()
-      .getData(options)
+      // We apply field config later
+      .getData({ withTransforms: options.withTransforms, withFieldConfig: false })
       .subscribe({
         next: (data) => {
           if (checkSchema) {
-            const sameStructure = compareArrayValues(last, data.series, compareDataFrameStructures);
-            if (sameStructure) {
+            if (lastRev === data.structureRev) {
               const now = Date.now();
               const elapsed = now - lastUpdate;
               if (elapsed < 10000) {
@@ -48,7 +43,7 @@ export const usePanelLatestData = (
               }
               lastUpdate = now;
             }
-            last = data.series;
+            lastRev = data.structureRev ?? -1;
           }
           setLatestData(data);
         },
@@ -64,12 +59,14 @@ export const usePanelLatestData = (
      * Otherwise, passing different references to the same object might cause troubles.
      */
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [panel, options.withFieldConfig, options.withTransforms]);
+  }, [panel, options.withTransforms]);
 
   return {
     data: latestData,
-    error: latestData && latestData.error,
-    isLoading: latestData ? latestData.state === LoadingState.Loading : true,
+    isLoading: latestData?.state === LoadingState.Loading,
     hasSeries: latestData ? !!latestData.series : false,
+    hasError: Boolean(
+      latestData && (latestData.error || latestData?.errors?.length || latestData.state === LoadingState.Error)
+    ),
   };
 };

@@ -5,4 +5,5 @@ export enum InspectTab {
   Stats = 'stats',
   JSON = 'json',
   Query = 'query',
+  Help = 'help', // get info required for support+debugging
 }

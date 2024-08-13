@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,13 +12,17 @@ import (
 	"strconv"
 	"strings"
 
-	apimodels "github.com/grafana/alerting-api/pkg/api"
+	"gopkg.in/yaml.v3"
+
 	"github.com/grafana/grafana/pkg/api/response"
-	"github.com/grafana/grafana/pkg/models"
+	"github.com/grafana/grafana/pkg/services/accesscontrol"
+	contextmodel "github.com/grafana/grafana/pkg/services/contexthandler/model"
 	"github.com/grafana/grafana/pkg/services/datasourceproxy"
 	"github.com/grafana/grafana/pkg/services/datasources"
-	"gopkg.in/macaron.v1"
-	"gopkg.in/yaml.v3"
+	apimodels "github.com/grafana/grafana/pkg/services/ngalert/api/tooling/definitions"
+	ngmodels "github.com/grafana/grafana/pkg/services/ngalert/models"
+	"github.com/grafana/grafana/pkg/services/org"
+	"github.com/grafana/grafana/pkg/web"
 )
 
 var searchRegex = regexp.MustCompile(`\{(\w+)\}`)
@@ -29,24 +34,25 @@ func toMacaronPath(path string) string {
 	}))
 }
 
-func backendType(ctx *models.ReqContext, cache datasources.CacheService) (apimodels.Backend, error) {
-	recipient := ctx.Params("Recipient")
-	if recipient == apimodels.GrafanaBackend.String() {
-		return apimodels.GrafanaBackend, nil
+func getDatasourceByUID(ctx *contextmodel.ReqContext, cache datasources.CacheService, expectedType apimodels.Backend) (*datasources.DataSource, error) {
+	datasourceUID := web.Params(ctx.Req)[":DatasourceUID"]
+	ds, err := cache.GetDatasourceByUID(ctx.Req.Context(), datasourceUID, ctx.SignedInUser, ctx.SkipDSCache)
+	if err != nil {
+		return nil, err
 	}
-	if datasourceID, err := strconv.ParseInt(recipient, 10, 64); err == nil {
-		if ds, err := cache.GetDatasource(datasourceID, ctx.SignedInUser, ctx.SkipCache); err == nil {
-			switch ds.Type {
-			case "loki", "prometheus":
-				return apimodels.LoTexRulerBackend, nil
-			case "alertmanager":
-				return apimodels.AlertmanagerBackend, nil
-			default:
-				return 0, fmt.Errorf("unexpected backend type (%v)", ds.Type)
-			}
+	switch expectedType {
+	case apimodels.AlertmanagerBackend:
+		if ds.Type != "alertmanager" {
+			return nil, unexpectedDatasourceTypeError(ds.Type, "alertmanager")
 		}
+	case apimodels.LoTexRulerBackend:
+		if ds.Type != "loki" && ds.Type != "prometheus" {
+			return nil, unexpectedDatasourceTypeError(ds.Type, "loki, prometheus")
+		}
+	default:
+		return nil, unexpectedDatasourceTypeError(ds.Type, expectedType.String())
 	}
-	return 0, fmt.Errorf("unexpected backend type (%v)", recipient)
+	return ds, nil
 }
 
 // macaron unsafely asserts the http.ResponseWriter is an http.CloseNotifier, which will panic.
@@ -61,40 +67,71 @@ func (w *safeMacaronWrapper) CloseNotify() <-chan bool {
 	return make(chan bool)
 }
 
-// replacedResponseWriter overwrites the underlying responsewriter used by a *models.ReqContext.
-// It's ugly because it needs to replace a value behind a few nested pointers.
-func replacedResponseWriter(ctx *models.ReqContext) (*models.ReqContext, *response.NormalResponse) {
-	resp := response.CreateNormalResponse(make(http.Header), nil, 0)
+// createProxyContext creates a new request context that is provided down to the data source proxy.
+// The request context
+// 1. overwrites the underlying response writer used by a *contextmodel.ReqContext because AlertingProxy needs to intercept
+// the response from the data source to analyze it and probably change
+// 2. elevates the current user permissions to Editor if both conditions are met: RBAC is enabled, user does not have Editor role.
+// This is needed to bypass the plugin authorization, which still relies on the legacy roles.
+// This elevation can be considered safe because all upstream calls are protected by the RBAC on web request router level.
+func (p *AlertingProxy) createProxyContext(ctx *contextmodel.ReqContext, request *http.Request, response *response.NormalResponse) *contextmodel.ReqContext {
 	cpy := *ctx
 	cpyMCtx := *cpy.Context
-	cpyMCtx.Resp = macaron.NewResponseWriter(ctx.Req.Method, &safeMacaronWrapper{resp})
+	cpyMCtx.Resp = web.NewResponseWriter(ctx.Req.Method, &safeMacaronWrapper{response})
 	cpy.Context = &cpyMCtx
-	return &cpy, resp
+	cpy.Req = request
+
+	// If RBAC is enabled, the actions are checked upstream and if the user gets here then it is allowed to do an action against a datasource.
+	// Some data sources require legacy Editor role in order to perform mutating operations. In this case, we elevate permissions for the context that we
+	// will provide downstream.
+	// TODO (yuri) remove this after RBAC for plugins is implemented
+	if !ctx.SignedInUser.HasRole(org.RoleEditor) {
+		newUser := *ctx.SignedInUser
+		newUser.OrgRole = org.RoleEditor
+		cpy.SignedInUser = &newUser
+	}
+	return &cpy
 }
 
 type AlertingProxy struct {
-	DataProxy *datasourceproxy.DatasourceProxyService
+	DataProxy *datasourceproxy.DataSourceProxyService
+	ac        accesscontrol.AccessControl
 }
 
 // withReq proxies a different request
 func (p *AlertingProxy) withReq(
-	ctx *models.ReqContext,
+	ctx *contextmodel.ReqContext,
 	method string,
 	u *url.URL,
 	body io.Reader,
-	extractor func([]byte) (interface{}, error),
+	extractor func(*response.NormalResponse) (any, error),
 	headers map[string]string,
 ) response.Response {
 	req, err := http.NewRequest(method, u.String(), body)
 	if err != nil {
-		return response.Error(400, err.Error(), nil)
+		return ErrResp(http.StatusBadRequest, err, "")
 	}
 	for h, v := range headers {
 		req.Header.Add(h, v)
 	}
-	newCtx, resp := replacedResponseWriter(ctx)
-	newCtx.Req.Request = req
-	p.DataProxy.ProxyDatasourceRequestWithID(newCtx, ctx.ParamsInt64("Recipient"))
+	// this response will be populated by the response from the datasource
+	resp := response.CreateNormalResponse(make(http.Header), nil, 0)
+	proxyContext := p.createProxyContext(ctx, req, resp)
+
+	datasourceID := web.Params(ctx.Req)[":DatasourceID"]
+	if datasourceID != "" {
+		recipient, err := strconv.ParseInt(web.Params(ctx.Req)[":DatasourceID"], 10, 64)
+		if err != nil {
+			return ErrResp(http.StatusBadRequest, err, "DatasourceID is invalid")
+		}
+		p.DataProxy.ProxyDatasourceRequestWithID(proxyContext, recipient)
+	} else {
+		datasourceUID := web.Params(ctx.Req)[":DatasourceUID"]
+		if datasourceUID == "" {
+			return ErrResp(http.StatusBadRequest, err, "DatasourceUID is empty")
+		}
+		p.DataProxy.ProxyDatasourceRequestWithUID(proxyContext, datasourceUID)
+	}
 
 	status := resp.Status()
 	if status >= 400 {
@@ -103,32 +140,43 @@ func (p *AlertingProxy) withReq(
 		// and it is successfully decoded and contains a message
 		// return this as response error message
 		if strings.HasPrefix(resp.Header().Get("Content-Type"), "application/json") {
-			var m map[string]interface{}
+			var m map[string]any
 			if err := json.Unmarshal(resp.Body(), &m); err == nil {
 				if message, ok := m["message"]; ok {
-					errMessage = message.(string)
+					errMessageStr, isString := message.(string)
+					if isString {
+						errMessage = errMessageStr
+					}
 				}
 			}
+		} else if strings.HasPrefix(resp.Header().Get("Content-Type"), "text/html") {
+			// if Content-Type is text/html
+			// do not return the body
+			errMessage = "redacted html"
 		}
-		return response.Error(status, errMessage, nil)
+		return ErrResp(status, errors.New(errMessage), "")
 	}
 
-	t, err := extractor(resp.Body())
+	t, err := extractor(resp)
 	if err != nil {
-		return response.Error(500, err.Error(), nil)
+		return ErrResp(http.StatusInternalServerError, err, "")
 	}
 
 	b, err := json.Marshal(t)
 	if err != nil {
-		return response.Error(500, err.Error(), nil)
+		return ErrResp(http.StatusInternalServerError, err, "")
 	}
 
 	return response.JSON(status, b)
 }
 
-func yamlExtractor(v interface{}) func([]byte) (interface{}, error) {
-	return func(b []byte) (interface{}, error) {
-		decoder := yaml.NewDecoder(bytes.NewReader(b))
+func yamlExtractor(v any) func(*response.NormalResponse) (any, error) {
+	return func(resp *response.NormalResponse) (any, error) {
+		contentType := resp.Header().Get("Content-Type")
+		if !strings.Contains(contentType, "yaml") {
+			return nil, fmt.Errorf("unexpected content type from upstream. expected YAML, got %v", contentType)
+		}
+		decoder := yaml.NewDecoder(bytes.NewReader(resp.Body()))
 		decoder.KnownFields(true)
 
 		err := decoder.Decode(v)
@@ -137,16 +185,48 @@ func yamlExtractor(v interface{}) func([]byte) (interface{}, error) {
 	}
 }
 
-func jsonExtractor(v interface{}) func([]byte) (interface{}, error) {
+func jsonExtractor(v any) func(*response.NormalResponse) (any, error) {
 	if v == nil {
 		// json unmarshal expects a pointer
-		v = &map[string]interface{}{}
+		v = &map[string]any{}
 	}
-	return func(b []byte) (interface{}, error) {
-		return v, json.Unmarshal(b, v)
+	return func(resp *response.NormalResponse) (any, error) {
+		contentType := resp.Header().Get("Content-Type")
+		if !strings.Contains(contentType, "json") {
+			return nil, fmt.Errorf("unexpected content type from upstream. expected JSON, got %v", contentType)
+		}
+		return v, json.Unmarshal(resp.Body(), v)
 	}
 }
 
-func messageExtractor(b []byte) (interface{}, error) {
-	return map[string]string{"message": string(b)}, nil
+func messageExtractor(resp *response.NormalResponse) (any, error) {
+	return map[string]string{"message": string(resp.Body())}, nil
+}
+
+// ErrorResp creates a response with a visible error
+func ErrResp(status int, err error, msg string, args ...any) *response.NormalResponse {
+	if msg != "" {
+		formattedMsg := fmt.Sprintf(msg, args...)
+		err = fmt.Errorf("%s: %w", formattedMsg, err)
+	}
+	return response.Error(status, err.Error(), err)
+}
+
+// accessForbiddenResp creates a response of forbidden access.
+func accessForbiddenResp() response.Response {
+	//nolint:stylecheck // Grandfathered capitalization of error.
+	return ErrResp(http.StatusForbidden, errors.New("Permission denied"), "")
+}
+
+func containsProvisionedAlerts(provenances map[string]ngmodels.Provenance, rules []*ngmodels.AlertRule) bool {
+	if len(provenances) == 0 {
+		return false
+	}
+	for _, rule := range rules {
+		provenance, ok := provenances[rule.UID]
+		if ok && provenance != ngmodels.ProvenanceNone {
+			return true
+		}
+	}
+	return false
 }

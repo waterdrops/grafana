@@ -1,13 +1,15 @@
-import React from 'react';
-import { UPlotChart } from './Plot';
-import { act, render } from '@testing-library/react';
-import { ArrayVector, dateTime, FieldConfig, FieldType, MutableDataFrame } from '@grafana/data';
-import { GraphFieldConfig, DrawStyle } from '../uPlot/config';
-import uPlot from 'uplot';
+import { render } from '@testing-library/react';
 import createMockRaf from 'mock-raf';
+import React from 'react';
+import uPlot from 'uplot';
+
+import { FieldConfig, FieldType, MutableDataFrame } from '@grafana/data';
+import { GraphFieldConfig, GraphDrawStyle } from '@grafana/schema';
+
+import { UPlotChart } from './Plot';
 import { UPlotConfigBuilder } from './config/UPlotConfigBuilder';
-import { preparePlotData } from './utils';
 import { SeriesProps } from './config/UPlotSeriesBuilder';
+import { preparePlotData2, getStackingGroups } from './utils';
 
 const mockRaf = createMockRaf();
 const setDataMock = jest.fn();
@@ -32,30 +34,24 @@ const mockData = () => {
   data.addField({
     type: FieldType.time,
     name: 'Time',
-    values: new ArrayVector([1602630000000, 1602633600000, 1602637200000]),
+    values: [1602630000000, 1602633600000, 1602637200000],
     config: {},
   });
 
   data.addField({
     type: FieldType.number,
     name: 'Value',
-    values: new ArrayVector([10, 20, 5]),
+    values: [10, 20, 5],
     config: {
       custom: {
-        drawStyle: DrawStyle.Line,
+        drawStyle: GraphDrawStyle.Line,
       },
     } as FieldConfig<GraphFieldConfig>,
   });
 
-  const timeRange = {
-    from: dateTime(1602673200000),
-    to: dateTime(1602680400000),
-    raw: { from: '1602673200000', to: '1602680400000' },
-  };
-
   const config = new UPlotConfigBuilder();
   config.addSeries({} as SeriesProps);
-  return { data, timeRange, config };
+  return { data: data, config };
 };
 
 describe('UPlotChart', () => {
@@ -71,22 +67,16 @@ describe('UPlotChart', () => {
   });
 
   it('destroys uPlot instance when component unmounts', () => {
-    const { data, timeRange, config } = mockData();
+    const { data, config } = mockData();
 
     const { unmount } = render(
       <UPlotChart
-        data={preparePlotData(data)} // mock
+        data={preparePlotData2(data, getStackingGroups(data))} // mock
         config={config}
-        timeRange={timeRange}
         width={100}
         height={100}
       />
     );
-
-    // we wait 1 frame for plugins initialisation logic to finish
-    act(() => {
-      mockRaf.step({ count: 1 });
-    });
 
     expect(uPlot).toBeCalledTimes(1);
     unmount();
@@ -95,22 +85,16 @@ describe('UPlotChart', () => {
 
   describe('data update', () => {
     it('skips uPlot reinitialization when there are no field config changes', () => {
-      const { data, timeRange, config } = mockData();
+      const { data, config } = mockData();
 
       const { rerender } = render(
         <UPlotChart
-          data={preparePlotData(data)} // mock
+          data={preparePlotData2(data, getStackingGroups(data))} // mock
           config={config}
-          timeRange={timeRange}
           width={100}
           height={100}
         />
       );
-
-      // we wait 1 frame for plugins initialisation logic to finish
-      act(() => {
-        mockRaf.step({ count: 1 });
-      });
 
       expect(uPlot).toBeCalledTimes(1);
 
@@ -118,9 +102,8 @@ describe('UPlotChart', () => {
 
       rerender(
         <UPlotChart
-          data={preparePlotData(data)} // changed
+          data={preparePlotData2(data, getStackingGroups(data))} // changed
           config={config}
-          timeRange={timeRange}
           width={100}
           height={100}
         />
@@ -132,10 +115,9 @@ describe('UPlotChart', () => {
 
   describe('config update', () => {
     it('skips uPlot intialization for width and height equal 0', async () => {
-      const { data, timeRange, config } = mockData();
-
+      const { data, config } = mockData();
       const { queryAllByTestId } = render(
-        <UPlotChart data={preparePlotData(data)} config={config} timeRange={timeRange} width={0} height={0} />
+        <UPlotChart data={preparePlotData2(data, getStackingGroups(data))} config={config} width={0} height={0} />
       );
 
       expect(queryAllByTestId('uplot-main-div')).toHaveLength(1);
@@ -143,22 +125,16 @@ describe('UPlotChart', () => {
     });
 
     it('reinitializes uPlot when config changes', () => {
-      const { data, timeRange, config } = mockData();
+      const { data, config } = mockData();
 
       const { rerender } = render(
         <UPlotChart
-          data={preparePlotData(data)} // frame
+          data={preparePlotData2(data, getStackingGroups(data))} // frame
           config={config}
-          timeRange={timeRange}
           width={100}
           height={100}
         />
       );
-
-      // we wait 1 frame for plugins initialisation logic to finish
-      act(() => {
-        mockRaf.step({ count: 1 });
-      });
 
       expect(uPlot).toBeCalledTimes(1);
 
@@ -166,7 +142,12 @@ describe('UPlotChart', () => {
       nextConfig.addSeries({} as SeriesProps);
 
       rerender(
-        <UPlotChart data={preparePlotData(data)} config={nextConfig} timeRange={timeRange} width={100} height={100} />
+        <UPlotChart
+          data={preparePlotData2(data, getStackingGroups(data))}
+          config={nextConfig}
+          width={100}
+          height={100}
+        />
       );
 
       expect(destroyMock).toBeCalledTimes(1);
@@ -174,30 +155,22 @@ describe('UPlotChart', () => {
     });
 
     it('skips uPlot reinitialization when only dimensions change', () => {
-      const { data, timeRange, config } = mockData();
+      const { data, config } = mockData();
 
       const { rerender } = render(
         <UPlotChart
-          data={preparePlotData(data)} // frame
+          data={preparePlotData2(data, getStackingGroups(data))} // frame
           config={config}
-          timeRange={timeRange}
           width={100}
           height={100}
         />
       );
 
       // we wait 1 frame for plugins initialisation logic to finish
-      act(() => {
-        mockRaf.step({ count: 1 });
-      });
-      const nextConfig = new UPlotConfigBuilder();
-      nextConfig.addSeries({} as SeriesProps);
-
       rerender(
         <UPlotChart
-          data={preparePlotData(data)} // frame
-          config={nextConfig}
-          timeRange={timeRange}
+          data={preparePlotData2(data, getStackingGroups(data))} // frame
+          config={config}
           width={200}
           height={200}
         />
@@ -206,69 +179,6 @@ describe('UPlotChart', () => {
       expect(destroyMock).toBeCalledTimes(0);
       expect(uPlot).toBeCalledTimes(1);
       expect(setSizeMock).toBeCalledTimes(1);
-    });
-
-    it('does not initialize plot when config and data are not in sync', () => {
-      const { data, timeRange, config } = mockData();
-
-      // 1 series in data, 2 series in config
-      config.addSeries({} as SeriesProps);
-
-      render(
-        <UPlotChart
-          data={preparePlotData(data)} // frame
-          config={config}
-          timeRange={timeRange}
-          width={100}
-          height={100}
-        />
-      );
-
-      // we wait 1 frame for plugins initialisation logic to finish
-      act(() => {
-        mockRaf.step({ count: 1 });
-      });
-
-      expect(destroyMock).toBeCalledTimes(0);
-      expect(uPlot).toBeCalledTimes(0);
-    });
-
-    it('does not reinitialize plot when config and data are not in sync', () => {
-      const { data, timeRange, config } = mockData();
-
-      // 1 series in data, 1 series in config
-      const { rerender } = render(
-        <UPlotChart
-          data={preparePlotData(data)} // frame
-          config={config}
-          timeRange={timeRange}
-          width={100}
-          height={100}
-        />
-      );
-
-      // we wait 1 frame for plugins initialisation logic to finish
-      act(() => {
-        mockRaf.step({ count: 1 });
-      });
-
-      const nextConfig = new UPlotConfigBuilder();
-      nextConfig.addSeries({} as SeriesProps);
-      nextConfig.addSeries({} as SeriesProps);
-
-      // 1 series in data, 2 series in config
-      rerender(
-        <UPlotChart
-          data={preparePlotData(data)} // frame
-          config={nextConfig}
-          timeRange={timeRange}
-          width={200}
-          height={200}
-        />
-      );
-
-      expect(destroyMock).toBeCalledTimes(0);
-      expect(uPlot).toBeCalledTimes(1);
     });
   });
 });

@@ -1,12 +1,12 @@
 import { compare, Operation } from 'fast-json-patch';
 // @ts-ignore
 import jsonMap from 'json-source-map';
-import _ from 'lodash';
+import { flow, get, isArray, isEmpty, last, sortBy, tail, toNumber, isNaN } from 'lodash';
 
 export type Diff = {
   op: 'add' | 'replace' | 'remove' | 'copy' | 'test' | '_get' | 'move';
-  value: any;
-  originalValue: any;
+  value: unknown;
+  originalValue: unknown;
   path: string[];
   startLineNumber: number;
 };
@@ -26,19 +26,19 @@ export const jsonDiff = (lhs: any, rhs: any): Diffs => {
       let value = undefined;
       let startLineNumber = 0;
 
-      const path = _.tail(diff.path.split('/'));
+      const path = tail(diff.path.split('/'));
 
-      if (diff.op === 'replace') {
-        originalValue = _.get(lhs, path);
+      if (diff.op === 'replace' && rhsMap.pointers[diff.path]) {
+        originalValue = get(lhs, path);
         value = diff.value;
         startLineNumber = rhsMap.pointers[diff.path].value.line;
       }
-      if (diff.op === 'add') {
+      if (diff.op === 'add' && rhsMap.pointers[diff.path]) {
         value = diff.value;
         startLineNumber = rhsMap.pointers[diff.path].value.line;
       }
-      if (diff.op === 'remove') {
-        originalValue = _.get(lhs, path);
+      if (diff.op === 'remove' && lhsMap.pointers[diff.path]) {
+        originalValue = get(lhs, path);
         startLineNumber = lhsMap.pointers[diff.path].value.line;
       }
 
@@ -52,9 +52,9 @@ export const jsonDiff = (lhs: any, rhs: any): Diffs => {
     });
   };
 
-  const sortByLineNumber = (diffs: Diff[]) => _.sortBy(diffs, 'startLineNumber');
+  const sortByLineNumber = (diffs: Diff[]) => sortBy(diffs, 'startLineNumber');
   const groupByPath = (diffs: Diff[]) =>
-    diffs.reduce<Record<string, any>>((acc, value) => {
+    diffs.reduce<Record<string, Diff[]>>((acc, value) => {
       const groupKey: string = value.path[0];
       if (!acc[groupKey]) {
         acc[groupKey] = [];
@@ -63,11 +63,11 @@ export const jsonDiff = (lhs: any, rhs: any): Diffs => {
       return acc;
     }, {});
 
-  return _.flow([getDiffInformation, sortByLineNumber, groupByPath])(diffs);
+  return flow([getDiffInformation, sortByLineNumber, groupByPath])(diffs);
 };
 
 export const getDiffText = (diff: Diff, showProp = true) => {
-  const prop = _.last(diff.path)!;
+  const prop = last(diff.path)!;
   const propIsNumeric = isNumeric(prop);
   const val = diff.op === 'remove' ? diff.originalValue : diff.value;
   let text = getDiffOperationText(diff.op);
@@ -76,7 +76,7 @@ export const getDiffText = (diff: Diff, showProp = true) => {
     if (propIsNumeric) {
       text += ` item ${prop}`;
     } else {
-      if (_.isArray(val) && !_.isEmpty(val)) {
+      if (isArray(val) && !isEmpty(val)) {
         text += ` ${val.length} ${prop}`;
       } else {
         text += ` ${prop}`;
@@ -87,7 +87,7 @@ export const getDiffText = (diff: Diff, showProp = true) => {
   return text;
 };
 
-const isNumeric = (value: string) => !_.isNaN(_.toNumber(value));
+const isNumeric = (value: string) => !isNaN(toNumber(value));
 
 export const getDiffOperationText = (operation: string): string => {
   if (operation === 'add') {

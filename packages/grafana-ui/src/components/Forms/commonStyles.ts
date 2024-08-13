@@ -1,76 +1,93 @@
-import { css } from '@emotion/css';
-import { GrafanaTheme, GrafanaThemeV2 } from '@grafana/data';
-import { focusCss } from '../../themes/mixins';
+import { css, cx } from '@emotion/css';
+
+import { GrafanaTheme2 } from '@grafana/data';
+
+import { getFocusStyles } from '../../themes/mixins';
 import { ComponentSize } from '../../types/size';
 
-export const getFocusStyle = (theme: GrafanaTheme) => css`
-  &:focus {
-    ${focusCss(theme)}
-  }
-`;
+export const getFocusStyle = (theme: GrafanaTheme2) =>
+  css({
+    '&:focus': getFocusStyles(theme),
+  });
 
-export const sharedInputStyle = (theme: GrafanaTheme, invalid = false) => {
-  const palette = theme.v2.palette;
-  const borderColor = invalid ? palette.error.border : palette.formComponent.border;
-  const background = palette.formComponent.background;
-  const textColor = palette.text.primary;
+export const sharedInputStyle = (theme: GrafanaTheme2, invalid = false) => {
+  const borderColor = invalid ? theme.colors.error.border : theme.components.input.borderColor;
+  const borderColorHover = invalid ? theme.colors.error.shade : theme.components.input.borderHover;
+  const background = theme.components.input.background;
+  const textColor = theme.components.input.text;
 
-  return css`
-    background-color: ${background};
-    line-height: ${theme.typography.lineHeight.md};
-    font-size: ${theme.typography.size.md};
-    color: ${textColor};
-    border: 1px solid ${borderColor};
-    padding: ${theme.v2.spacing(0, 1, 0, 1)};
+  // Cannot use our normal borders for this color for some reason due the alpha values in them.
+  // Need to colors without alpha channel
+  const autoFillBorder = theme.isDark ? '#2e2f35' : '#bab4ca';
 
-    &:-webkit-autofill,
-    &:-webkit-autofill:hover {
-      /* Welcome to 2005. This is a HACK to get rid od Chromes default autofill styling */
-      box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0), inset 0 0 0 100px ${background}!important;
-      -webkit-text-fill-color: ${textColor} !important;
-    }
+  return cx(
+    inputPadding(theme),
+    css({
+      background,
+      lineHeight: theme.typography.body.lineHeight,
+      fontSize: theme.typography.size.md,
+      color: textColor,
+      border: `1px solid ${borderColor}`,
 
-    &:-webkit-autofill:focus {
-      /* Welcome to 2005. This is a HACK to get rid od Chromes default autofill styling */
-      box-shadow: 0 0 0 2px ${theme.colors.bodyBg}, 0 0 0px 4px ${theme.colors.formFocusOutline},
-        inset 0 0 0 1px rgba(255, 255, 255, 0), inset 0 0 0 100px ${background}!important;
-      -webkit-text-fill-color: ${textColor} !important;
-    }
+      '&:-webkit-autofill, &:-webkit-autofill:hover': {
+        /* Welcome to 2005. This is a HACK to get rid od Chromes default autofill styling */
+        boxShadow: `inset 0 0 0 1px rgba(255, 255, 255, 0), inset 0 0 0 100px ${background}!important`,
+        WebkitTextFillColor: `${textColor} !important`,
+        borderColor: autoFillBorder,
+      },
 
-    &:hover {
-      border-color: ${borderColor};
-    }
+      '&:-webkit-autofill:focus': {
+        /* Welcome to 2005. This is a HACK to get rid od Chromes default autofill styling */
+        boxShadow: `0 0 0 2px ${theme.colors.background.primary}, 0 0 0px 4px ${theme.colors.primary.main}, inset 0 0 0 1px rgba(255, 255, 255, 0), inset 0 0 0 100px ${background}!important`,
+        WebkitTextFillColor: `${textColor} !important`,
+      },
 
-    &:focus {
-      outline: none;
-    }
+      '&:hover': {
+        borderColor: borderColorHover,
+      },
 
-    &:disabled {
-      background-color: ${palette.formComponent.disabledBackground};
-      color: ${palette.text.disabled};
-    }
+      '&:focus': {
+        outline: 'none',
+      },
 
-    &::placeholder {
-      color: ${palette.text.disabled};
-      opacity: 1;
-    }
-  `;
+      '&:disabled': {
+        backgroundColor: theme.colors.action.disabledBackground,
+        color: theme.colors.action.disabledText,
+        border: `1px solid ${theme.colors.action.disabledBackground}`,
+
+        '&:hover': {
+          borderColor,
+        },
+      },
+
+      '&::placeholder': {
+        color: theme.colors.text.disabled,
+        opacity: 1,
+      },
+    })
+  );
+};
+
+export const inputPadding = (theme: GrafanaTheme2) => {
+  return css({
+    padding: theme.spacing(0, 1, 0, 1),
+  });
 };
 
 export const inputSizes = () => {
   return {
-    sm: css`
-      width: ${inputSizesPixels('sm')};
-    `,
-    md: css`
-      width: ${inputSizesPixels('md')};
-    `,
-    lg: css`
-      width: ${inputSizesPixels('lg')};
-    `,
-    auto: css`
-      width: ${inputSizesPixels('auto')};
-    `,
+    sm: css({
+      width: inputSizesPixels('sm'),
+    }),
+    md: css({
+      width: inputSizesPixels('md'),
+    }),
+    lg: css({
+      width: inputSizesPixels('lg'),
+    }),
+    auto: css({
+      width: inputSizesPixels('auto'),
+    }),
   };
 };
 
@@ -88,7 +105,7 @@ export const inputSizesPixels = (size: string) => {
   }
 };
 
-export function getPropertiesForButtonSize(size: ComponentSize, theme: GrafanaThemeV2) {
+export function getPropertiesForButtonSize(size: ComponentSize, theme: GrafanaTheme2) {
   switch (size) {
     case 'sm':
       return {
